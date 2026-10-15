@@ -146,19 +146,19 @@ img('items', grid(X.ITEM_ICONS.map((i) => X.drawItemIcon(i)), X.ITEM_ICONS.lengt
   manifest.images['keyart_small'] = { w: W, h: H };
 }
 
-// audio: render WAV masters, then encode compact OGG (+ AAC for Safari) when ffmpeg is available
+// audio: render WAV masters, then encode compact OGG (+ MP3 for Safari) when ffmpeg is available
 const wavDir = `${tmpdir()}/kolya-audio`;
 rmSync(wavDir, { recursive: true, force: true });
 mkdirSync(wavDir, { recursive: true });
 renderAudio(wavDir);
 rmSync(`${OUT}/audio`, { recursive: true, force: true });
 mkdirSync(`${OUT}/audio`, { recursive: true });
-let formats: string[] = ['ogg', 'm4a'];
+let formats: string[] = ['ogg', 'mp3'];
 try {
   for (const f of readdirSync(wavDir)) {
     const base = f.replace(/\.wav$/, '');
     execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', `${wavDir}/${f}`, '-c:a', 'libvorbis', '-q:a', '4', `${OUT}/audio/${base}.ogg`]);
-    execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', `${wavDir}/${f}`, '-c:a', 'aac', '-b:a', '96k', `${OUT}/audio/${base}.m4a`]);
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', `${wavDir}/${f}`, '-c:a', 'libmp3lame', '-b:a', '96k', `${OUT}/audio/${base}.mp3`]);
   }
 } catch {
   console.warn('ffmpeg not available — shipping WAV audio');

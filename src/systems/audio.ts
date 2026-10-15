@@ -56,6 +56,7 @@ export class AudioManager {
     this.currentMusicKey = key;
     if (!key) return;
     let m = this.music.get(key);
+    if (!m && !this.has(key)) return;
     if (!m) {
       m = this.sound.add(key, { loop: true, volume: 0 }) as Phaser.Sound.WebAudioSound;
       this.music.set(key, m);
@@ -82,6 +83,7 @@ export class AudioManager {
     this.ambienceKey = key;
     this.ambience = null;
     if (!key) return;
+    if (!this.has(key)) return;
     const a = this.sound.add(key, { loop: true, volume: 0 }) as Phaser.Sound.WebAudioSound;
     a.play();
     this.ambience = a;
@@ -91,8 +93,13 @@ export class AudioManager {
   sfx(key: string, opts: { detune?: number; volume?: number; rate?: number; caption?: string } = {}) {
     if (!this.sound) return;
     const v = this.sfxVol() * (opts.volume ?? 1);
-    if (v > 0) this.sound.play(key, { volume: v, detune: opts.detune ?? 0, rate: opts.rate ?? 1 });
+    if (v > 0 && this.has(key)) this.sound.play(key, { volume: v, detune: opts.detune ?? 0, rate: opts.rate ?? 1 });
     if (opts.caption && this.settings.captions) this.onCaption?.(opts.caption);
+  }
+
+  /** A sound may be missing if the browser supports none of the shipped formats. */
+  private has(key: string): boolean {
+    return this.sound.game.cache.audio.exists(key);
   }
 
   get currentMusic(): string | null {
