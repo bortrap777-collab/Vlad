@@ -1,0 +1,899 @@
+{
+ "version": 1,
+ "frame": {
+  "w": 48,
+  "h": 80
+ },
+ "sheetCols": 16,
+ "chars": {
+  "kolya": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "block": {
+    "start": 30,
+    "end": 31,
+    "fps": 6,
+    "loop": true
+   },
+   "dodge": {
+    "start": 32,
+    "end": 34,
+    "fps": 14,
+    "loop": false
+   },
+   "push": {
+    "start": 35,
+    "end": 38,
+    "fps": 12,
+    "loop": false
+   },
+   "hurt": {
+    "start": 39,
+    "end": 40,
+    "fps": 8,
+    "loop": false
+   },
+   "down": {
+    "start": 41,
+    "end": 41,
+    "fps": 1,
+    "loop": false
+   },
+   "kneel": {
+    "start": 42,
+    "end": 43,
+    "fps": 4,
+    "loop": true
+   },
+   "wave": {
+    "start": 44,
+    "end": 45,
+    "fps": 5,
+    "loop": true
+   }
+  },
+  "olya": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "sad": {
+    "start": 30,
+    "end": 31,
+    "fps": 2,
+    "loop": true
+   },
+   "wave": {
+    "start": 32,
+    "end": 33,
+    "fps": 5,
+    "loop": true
+   }
+  },
+  "sveta": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "draw": {
+    "start": 30,
+    "end": 32,
+    "fps": 3,
+    "loop": true
+   }
+  },
+  "lyokha": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "tinker": {
+    "start": 30,
+    "end": 31,
+    "fps": 4,
+    "loop": true
+   }
+  },
+  "seryoga": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "windup": {
+    "start": 30,
+    "end": 31,
+    "fps": 6,
+    "loop": true
+   },
+   "attack": {
+    "start": 32,
+    "end": 33,
+    "fps": 10,
+    "loop": false
+   },
+   "hurt": {
+    "start": 34,
+    "end": 35,
+    "fps": 8,
+    "loop": false
+   },
+   "stagger": {
+    "start": 36,
+    "end": 37,
+    "fps": 5,
+    "loop": true
+   },
+   "laugh": {
+    "start": 38,
+    "end": 39,
+    "fps": 5,
+    "loop": true
+   }
+  },
+  "zheka": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "windup": {
+    "start": 30,
+    "end": 31,
+    "fps": 6,
+    "loop": true
+   },
+   "attack": {
+    "start": 32,
+    "end": 33,
+    "fps": 10,
+    "loop": false
+   },
+   "hurt": {
+    "start": 34,
+    "end": 35,
+    "fps": 8,
+    "loop": false
+   },
+   "stagger": {
+    "start": 36,
+    "end": 37,
+    "fps": 5,
+    "loop": true
+   },
+   "laugh": {
+    "start": 38,
+    "end": 39,
+    "fps": 5,
+    "loop": true
+   }
+  },
+  "tolstyi": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "windup": {
+    "start": 30,
+    "end": 31,
+    "fps": 6,
+    "loop": true
+   },
+   "attack": {
+    "start": 32,
+    "end": 33,
+    "fps": 10,
+    "loop": false
+   },
+   "hurt": {
+    "start": 34,
+    "end": 35,
+    "fps": 8,
+    "loop": false
+   },
+   "stagger": {
+    "start": 36,
+    "end": 37,
+    "fps": 5,
+    "loop": true
+   },
+   "laugh": {
+    "start": 38,
+    "end": 39,
+    "fps": 5,
+    "loop": true
+   }
+  },
+  "zina": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   }
+  },
+  "vitya": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   }
+  },
+  "sasha": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   }
+  },
+  "alexey": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "salute": {
+    "start": 30,
+    "end": 30,
+    "fps": 1,
+    "loop": false
+   }
+  },
+  "mama": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "argue": {
+    "start": 30,
+    "end": 32,
+    "fps": 5,
+    "loop": true
+   }
+  },
+  "papa": {
+   "idle": {
+    "start": 0,
+    "end": 7,
+    "fps": 4,
+    "loop": true
+   },
+   "walk": {
+    "start": 8,
+    "end": 13,
+    "fps": 9,
+    "loop": true
+   },
+   "run": {
+    "start": 14,
+    "end": 19,
+    "fps": 13,
+    "loop": true
+   },
+   "turn": {
+    "start": 20,
+    "end": 21,
+    "fps": 12,
+    "loop": false
+   },
+   "talk": {
+    "start": 22,
+    "end": 25,
+    "fps": 6,
+    "loop": true
+   },
+   "front": {
+    "start": 26,
+    "end": 29,
+    "fps": 3,
+    "loop": true
+   },
+   "argue": {
+    "start": 30,
+    "end": 32,
+    "fps": 5,
+    "loop": true
+   }
+  }
+ },
+ "dog": {
+  "w": 44,
+  "h": 32,
+  "anims": {
+   "idle": {
+    "start": 0,
+    "end": 3,
+    "fps": 6,
+    "loop": true
+   },
+   "walk": {
+    "start": 4,
+    "end": 9,
+    "fps": 10,
+    "loop": true
+   },
+   "run": {
+    "start": 10,
+    "end": 15,
+    "fps": 14,
+    "loop": true
+   },
+   "cower": {
+    "start": 16,
+    "end": 17,
+    "fps": 8,
+    "loop": true
+   },
+   "bark": {
+    "start": 18,
+    "end": 19,
+    "fps": 6,
+    "loop": true
+   },
+   "sit": {
+    "start": 20,
+    "end": 21,
+    "fps": 3,
+    "loop": true
+   }
+  }
+ },
+ "portraits": [
+  "kolya",
+  "olya",
+  "sveta",
+  "lyokha",
+  "seryoga",
+  "zheka",
+  "tolstyi",
+  "zina",
+  "vitya",
+  "sasha",
+  "alexey",
+  "mama",
+  "papa"
+ ],
+ "expressions": [
+  "neutral",
+  "happy",
+  "sad",
+  "angry",
+  "surprised"
+ ],
+ "images": {
+  "dog": {
+   "w": 704,
+   "h": 64
+  },
+  "sky": {
+   "w": 480,
+   "h": 270
+  },
+  "far": {
+   "w": 960,
+   "h": 270
+  },
+  "mid": {
+   "w": 1360,
+   "h": 270
+  },
+  "courtyard": {
+   "w": 1920,
+   "h": 270
+  },
+  "apartment": {
+   "w": 640,
+   "h": 270
+  },
+  "lamp": {
+   "w": 28,
+   "h": 110
+  },
+  "bench": {
+   "w": 56,
+   "h": 26
+  },
+  "slide": {
+   "w": 120,
+   "h": 96
+  },
+  "swings": {
+   "w": 150,
+   "h": 96
+  },
+  "swingseat": {
+   "w": 24,
+   "h": 62
+  },
+  "climber": {
+   "w": 90,
+   "h": 70
+  },
+  "car": {
+   "w": 96,
+   "h": 44
+  },
+  "trash": {
+   "w": 60,
+   "h": 34
+  },
+  "drift_a": {
+   "w": 120,
+   "h": 22
+  },
+  "drift_b": {
+   "w": 80,
+   "h": 16
+  },
+  "post": {
+   "w": 10,
+   "h": 40
+  },
+  "boxes": {
+   "w": 48,
+   "h": 44
+  },
+  "bread": {
+   "w": 14,
+   "h": 8
+  },
+  "key": {
+   "w": 8,
+   "h": 12
+  },
+  "can": {
+   "w": 6,
+   "h": 7
+  },
+  "glow_warm": {
+   "w": 96,
+   "h": 96
+  },
+  "glow_small": {
+   "w": 32,
+   "h": 32
+  },
+  "glow_cold": {
+   "w": 80,
+   "h": 80
+  },
+  "footprint": {
+   "w": 5,
+   "h": 3
+  },
+  "shadow": {
+   "w": 22,
+   "h": 5
+  },
+  "shadow_big": {
+   "w": 34,
+   "h": 5
+  },
+  "flake1": {
+   "w": 1,
+   "h": 1
+  },
+  "flake2": {
+   "w": 2,
+   "h": 2
+  },
+  "puff": {
+   "w": 8,
+   "h": 6
+  },
+  "ui_frame": {
+   "w": 24,
+   "h": 24
+  },
+  "items": {
+   "w": 96,
+   "h": 16
+  },
+  "keyart_small": {
+   "w": 320,
+   "h": 180
+  }
+ },
+ "audio": [
+  "music_yard",
+  "music_home",
+  "music_fight",
+  "music_mystery",
+  "amb_wind",
+  "sfx_step_snow",
+  "sfx_step_floor",
+  "sfx_blip",
+  "sfx_ui_move",
+  "sfx_ui_ok",
+  "sfx_pickup",
+  "sfx_clue",
+  "sfx_door",
+  "sfx_hit",
+  "sfx_block",
+  "sfx_whoosh",
+  "sfx_bark",
+  "sfx_whine",
+  "sfx_cans",
+  "sfx_engine",
+  "sfx_untie"
+ ]
+}

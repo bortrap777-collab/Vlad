@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Коля: Маленький хулиган</title>
+    <meta name="description" content="Сюжетное пиксельное приключение. Зима, девяностые, новый двор." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%2310152a'/%3E%3Crect x='3' y='3' width='10' height='5' fill='%23573423'/%3E%3Crect x='4' y='7' width='8' height='6' fill='%23f6caa2'/%3E%3Crect x='4' y='7' width='8' height='2' fill='%23d0592a'/%3E%3C/svg%3E" />
+    <style>
+      :root { color-scheme: dark; }
+      html, body { margin: 0; height: 100%; background: #070913; overflow: hidden; }
+      #game { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+      #game canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+      #boot {
+        position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        color: #9aa6c8; font: 16px "PT Sans", system-ui, sans-serif; letter-spacing: .04em; gap: 12px; pointer-events: none;
+      }
+      #boot.hidden { display: none; }
+      #boot .err { color: #f08a8a; max-width: 520px; text-align: center; pointer-events: auto; }
+      noscript { color: #eef1fb; font: 18px system-ui; position: fixed; inset: 0; display: grid; place-items: center; }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="boot">Загрузка…</div>
+    <noscript>Для игры нужен включённый JavaScript.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
