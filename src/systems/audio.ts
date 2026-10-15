@@ -8,7 +8,7 @@ export class AudioManager {
   private sound!: Phaser.Sound.BaseSoundManager;
   private tweens!: Phaser.Tweens.TweenManager;
   private music = new Map<string, Phaser.Sound.WebAudioSound | Phaser.Sound.HTML5AudioSound>();
-  private currentMusic: string | null = null;
+  private currentMusicKey: string | null = null;
   private ambience: Phaser.Sound.BaseSound | null = null;
   private ambienceKey: string | null = null;
   /** Caption callback for subtitles of sounds. */
@@ -34,7 +34,7 @@ export class AudioManager {
   }
 
   applyVolumes() {
-    for (const [k, m] of this.music) if (k === this.currentMusic) m.setVolume(this.musicVol());
+    for (const [k, m] of this.music) if (k === this.currentMusicKey) m.setVolume(this.musicVol());
     if (this.ambience) (this.ambience as Phaser.Sound.WebAudioSound).setVolume(this.musicVol() * 0.5);
   }
 
@@ -44,8 +44,8 @@ export class AudioManager {
    */
   playMusic(key: MusicKey | null, fadeMs = 900) {
     if (!this.sound) return;
-    if (key === this.currentMusic) return;
-    const prevKey = this.currentMusic;
+    if (key === this.currentMusicKey) return;
+    const prevKey = this.currentMusicKey;
     if (prevKey) {
       const prev = this.music.get(prevKey);
       if (prev) {
@@ -53,7 +53,7 @@ export class AudioManager {
         this.tweens.add({ targets: prev, volume: 0, duration: fadeMs, onComplete: () => prev.pause() });
       }
     }
-    this.currentMusic = key;
+    this.currentMusicKey = key;
     if (!key) return;
     let m = this.music.get(key);
     if (!m) {
@@ -93,6 +93,10 @@ export class AudioManager {
     const v = this.sfxVol() * (opts.volume ?? 1);
     if (v > 0) this.sound.play(key, { volume: v, detune: opts.detune ?? 0, rate: opts.rate ?? 1 });
     if (opts.caption && this.settings.captions) this.onCaption?.(opts.caption);
+  }
+
+  get currentMusic(): string | null {
+    return this.currentMusicKey;
   }
 
   get locked(): boolean {

@@ -17,6 +17,6 @@ export default tseslint.config(
   },
   {
     files: ['tests/e2e/**/*.mjs'],
-    languageOptions: { globals: { window: 'readonly', console: 'readonly', process: 'readonly', localStorage: 'readonly' } },
+    languageOptions: { globals: { window: 'readonly', document: 'readonly', innerWidth: 'readonly', innerHeight: 'readonly', console: 'readonly', process: 'readonly', localStorage: 'readonly' } },
   },
 );

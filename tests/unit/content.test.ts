@@ -87,7 +87,7 @@ describe('content integrity', () => {
       for (const a of ['idle', 'walk', 'turn', 'talk']) if (!manifest.chars[id][a]) missing.push(`${id}.${a} animation`);
       expect(manifest.chars[id].walk.end - manifest.chars[id].walk.start + 1).toBeGreaterThanOrEqual(5);
     }
-    for (const a of manifest.audio) if (!existsSync(`public/assets/gen/audio/${a}.wav`)) missing.push(a);
+    for (const a of manifest.audio) for (const f of manifest.audioFormats ?? ['wav']) if (!existsSync(`public/assets/gen/audio/${a}.${f}`)) missing.push(`${a}.${f}`);
     expect(missing).toEqual([]);
   });
 

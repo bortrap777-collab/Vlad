@@ -98,23 +98,24 @@ export function settingsScreen(scene: Phaser.Scene, stack: ScreenStack, depth = 
   const sv = services();
   const c = frame(scene, 'Настройки', 640, 460, depth);
   const step = (k: 'master' | 'music' | 'sfx') => (d: -1 | 1) => sv.updateSettings((s) => (s[k] = Math.round(Math.max(0, Math.min(1, s[k] + d * 0.1)) * 10) / 10));
-  const onOff = (v: boolean) => (v ? 'вкл.' : 'выкл.');
+  const onOff = (v: boolean) => (v ? 'включено' : 'выключено');
   const items: MenuItem[] = [
-    { label: () => `Общая громкость   ${bar(sv.settings.master)}`, onAdjust: step('master'), hint: 'Стрелки влево/вправо — изменить' },
-    { label: () => `Музыка                ${bar(sv.settings.music)}`, onAdjust: step('music'), hint: 'Стрелки влево/вправо — изменить' },
-    { label: () => `Звуки                   ${bar(sv.settings.sfx)}`, onAdjust: step('sfx'), hint: 'Стрелки влево/вправо — изменить' },
-    { label: () => `Звук: ${sv.settings.muted ? 'выключен' : 'включён'}`, onSelect: () => sv.updateSettings((s) => (s.muted = !s.muted)) },
+    { label: 'Общая громкость', value: () => bar(sv.settings.master), onAdjust: step('master'), hint: 'Стрелки влево/вправо или клик по шкале — изменить.' },
+    { label: 'Музыка', value: () => bar(sv.settings.music), onAdjust: step('music'), hint: 'Стрелки влево/вправо или клик по шкале — изменить.' },
+    { label: 'Звуки', value: () => bar(sv.settings.sfx), onAdjust: step('sfx'), hint: 'Стрелки влево/вправо или клик по шкале — изменить.' },
+    { label: 'Звук', value: () => (sv.settings.muted ? 'выключен' : 'включён'), onSelect: () => sv.updateSettings((s) => (s.muted = !s.muted)) },
     {
-      label: () => `Скорость текста: ${SPEED_LABEL[sv.settings.textSpeed]}`,
+      label: 'Скорость текста',
+      value: () => SPEED_LABEL[sv.settings.textSpeed],
       onAdjust: (d) => sv.updateSettings((s) => (s.textSpeed = SPEEDS[(SPEEDS.indexOf(s.textSpeed) + d + 4) % 4])),
       hint: 'Как быстро печатаются реплики.',
     },
-    { label: () => `Субтитры звуков: ${onOff(sv.settings.captions)}`, onSelect: () => sv.updateSettings((s) => (s.captions = !s.captions)), hint: 'Подписи вроде «[Скулит собака]».' },
-    { label: () => `Меньше движения: ${onOff(sv.settings.reducedMotion)}`, onSelect: () => sv.updateSettings((s) => (s.reducedMotion = !s.reducedMotion)), hint: 'Без тряски камеры, меньше снегопада и вспышек.' },
-    { label: () => `Полный экран: ${onOff(scene.scale.isFullscreen)}`, onSelect: () => (scene.scale.isFullscreen ? scene.scale.stopFullscreen() : scene.scale.startFullscreen()) },
+    { label: 'Субтитры звуков', value: () => onOff(sv.settings.captions), onSelect: () => sv.updateSettings((s) => (s.captions = !s.captions)), hint: 'Подписи вроде «[Скулит собака]».' },
+    { label: 'Меньше движения', value: () => onOff(sv.settings.reducedMotion), onSelect: () => sv.updateSettings((s) => (s.reducedMotion = !s.reducedMotion)), hint: 'Без тряски камеры, меньше снегопада и вспышек.' },
+    { label: 'Полный экран', value: () => onOff(scene.scale.isFullscreen), onSelect: () => (scene.scale.isFullscreen ? scene.scale.stopFullscreen() : scene.scale.startFullscreen()) },
     { label: 'Назад', onSelect: () => stack.pop() },
   ];
-  const menu = new Menu(scene, UI_W / 2 - 250, 128, items, { size: 20, gap: 36, hintY: 450 });
+  const menu = new Menu(scene, UI_W / 2 - 250, 128, items, { size: 20, gap: 36, hintY: 450, valueX: 270 });
   c.add(menu.container);
   return { container: c, menu };
 }
@@ -137,7 +138,8 @@ export function controlsScreen(scene: Phaser.Scene, stack: ScreenStack, depth = 
   const status = txt(scene, UI_W / 2, 488, 'Выберите действие и нажмите Enter, чтобы переназначить клавишу.', 15, COLORS.textDim).setOrigin(0.5);
   c.add(status);
   const items: MenuItem[] = ACTIONS.map((a) => ({
-    label: () => `${ACTION_LABEL[a].padEnd(20, ' ')}${sv.settings.keys[a].map(keyLabel).join(' / ')}${capturing === a ? '   …' : ''}`,
+    label: ACTION_LABEL[a],
+    value: () => (capturing === a ? 'нажмите клавишу…' : sv.settings.keys[a].map(keyLabel).join(' / ')),
     onSelect: () => {
       capturing = a;
       status.setText(`Нажмите новую клавишу для «${ACTION_LABEL[a]}».`).setColor(COLORS.accentText);
@@ -163,7 +165,7 @@ export function controlsScreen(scene: Phaser.Scene, stack: ScreenStack, depth = 
     },
   });
   items.push({ label: 'Назад', onSelect: () => stack.pop() });
-  const menu = new Menu(scene, UI_W / 2 - 290, 96, items, { size: 18, gap: 34 });
+  const menu = new Menu(scene, UI_W / 2 - 290, 96, items, { size: 18, gap: 34, valueX: 240 });
   c.add(menu.container);
   const help = txt(scene, UI_W / 2 - 290, 96 + items.length * 34, 'Мышью можно нажимать на пункты меню и варианты ответов.', 14, COLORS.textDim);
   c.add(help);

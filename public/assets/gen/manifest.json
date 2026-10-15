@@ -895,5 +895,9 @@
   "sfx_cans",
   "sfx_engine",
   "sfx_untie"
+ ],
+ "audioFormats": [
+  "ogg",
+  "m4a"
  ]
 }

@@ -208,7 +208,7 @@ export const LEVELS: Record<LevelId, LevelDef> = {
     lights: [
       // lamp-post glows are generated from the lamp props in WorldScene
       { x: 196, y: 159, texture: 'glow_small', scale: 1.3, alpha: 0.9 },
-      { x: 1298, y: 190, texture: 'glow_small', scale: 1.6, alpha: 0.8 },
+      { x: 1298, y: 184, texture: 'glow_small', scale: 1.8, alpha: 0.8 },
     ],
   },
 };

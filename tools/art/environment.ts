@@ -379,7 +379,7 @@ export function drawCourtyard(): PixelCanvas {
   c.rect(ex - 24, 154, 48, 4, (x, y) => rampAt(P.panel, 0.4 + ((x - ex + 24) / 48) * 0.2, x, y));
   c.rect(ex - 25, 150, 50, 4, (x, y) => rampAt(P.snow, 0.8 + (hash(x, y) - 0.5) * 0.1, x, y));
   c.rect(ex - 3, 158, 6, 3, P.windowWarm[4]);
-  c.ellipse(ex, 170, 40, 30, (x, y, nx, ny) => mix(c.get(x, y), P.windowWarm[3], Math.max(0, 1 - Math.hypot(nx, ny)) * 0.35));
+  c.ellipse(ex, 170, 40, 30, (x, y, nx, ny) => (c.alphaAt(x, y) ? mix(c.get(x, y), P.windowWarm[3], Math.max(0, 1 - Math.hypot(nx, ny)) * 0.35) : null));
   // steps
   c.rect(ex - 16, 200, 32, 3, P.panel[3]);
   c.rect(ex - 18, 203, 36, 3, P.panel[2]);
@@ -395,7 +395,7 @@ export function drawCourtyard(): PixelCanvas {
   c.rect(840, 192, 70, 4, (x, y) => rampAt(P.snow, 0.8, x, y));
 
   // garages
-  for (const g of L.garages) garage(c, g.x, 206, g.w, 34, g.num === '12' ? P.garageGreen : g.num === '7' ? P.garageBrown : P.garage, g.num, g.open);
+  for (const g of L.garages) garage(c, g.x, 222, g.w, 54, g.num === '12' ? P.garageGreen : g.num === '7' ? P.garageBrown : P.garage, g.num, g.open);
   // arch passage at the far right
   c.rect(L.archX - 10, 120, 140, 86, (x, y) => rampAt(P.panel, 0.38 + (hash(x, y, 7) - 0.5) * 0.06, x, y));
   c.rect(L.archX + 20, 150, 50, 56, (x, y) => rampAt([0x0a0c18, 0x121628, 0x1c2238], 0.2 + (y - 150) / 56 * 0.6, x, y));

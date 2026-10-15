@@ -13,6 +13,7 @@ export interface Manifest {
   expressions: string[];
   images: Record<string, { w: number; h: number }>;
   audio: string[];
+  audioFormats?: string[];
 }
 export const MANIFEST = manifest as Manifest;
 
@@ -45,7 +46,8 @@ export class BootScene extends Phaser.Scene {
       if (key === 'dog' || key === 'items') continue;
       this.load.image(key, `${BASE}${key}.png`);
     }
-    for (const a of MANIFEST.audio) this.load.audio(a, `${BASE}audio/${a}.wav`);
+    const formats = MANIFEST.audioFormats ?? ['wav'];
+    for (const a of MANIFEST.audio) this.load.audio(a, formats.map((f) => `${BASE}audio/${a}.${f}`));
   }
 
   create() {

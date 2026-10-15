@@ -2,7 +2,9 @@
  * Generates every bitmap and audio asset used by the game into public/assets/gen.
  * Run: npm run assets
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { PixelCanvas } from './art/raster';
 import { buildAnims, drawPortrait, drawCharacter, FRAME_W, FRAME_H, type Expr } from './art/characters';
 import { CAST, extraAnims } from './art/cast';
@@ -144,7 +146,26 @@ img('items', grid(X.ITEM_ICONS.map((i) => X.drawItemIcon(i)), X.ITEM_ICONS.lengt
   manifest.images['keyart_small'] = { w: W, h: H };
 }
 
-renderAudio(`${OUT}/audio`);
+// audio: render WAV masters, then encode compact OGG (+ AAC for Safari) when ffmpeg is available
+const wavDir = `${tmpdir()}/kolya-audio`;
+rmSync(wavDir, { recursive: true, force: true });
+mkdirSync(wavDir, { recursive: true });
+renderAudio(wavDir);
+rmSync(`${OUT}/audio`, { recursive: true, force: true });
+mkdirSync(`${OUT}/audio`, { recursive: true });
+let formats: string[] = ['ogg', 'm4a'];
+try {
+  for (const f of readdirSync(wavDir)) {
+    const base = f.replace(/\.wav$/, '');
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', `${wavDir}/${f}`, '-c:a', 'libvorbis', '-q:a', '4', `${OUT}/audio/${base}.ogg`]);
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-i', `${wavDir}/${f}`, '-c:a', 'aac', '-b:a', '96k', `${OUT}/audio/${base}.m4a`]);
+  }
+} catch {
+  console.warn('ffmpeg not available — shipping WAV audio');
+  formats = ['wav'];
+  for (const f of readdirSync(wavDir)) writeFileSync(`${OUT}/audio/${f}`, readFileSync(`${wavDir}/${f}`));
+}
+(manifest as unknown as { audioFormats: string[] }).audioFormats = formats;
 manifest.audio = ['music_yard', 'music_home', 'music_fight', 'music_mystery', 'amb_wind', 'sfx_step_snow', 'sfx_step_floor', 'sfx_blip', 'sfx_ui_move', 'sfx_ui_ok', 'sfx_pickup', 'sfx_clue', 'sfx_door', 'sfx_hit', 'sfx_block', 'sfx_whoosh', 'sfx_bark', 'sfx_whine', 'sfx_cans', 'sfx_engine', 'sfx_untie'];
 writeFileSync(`${OUT}/manifest.json`, JSON.stringify(manifest, null, 1));
 writeFileSync('src/generated/manifest.json', JSON.stringify(manifest, null, 1));

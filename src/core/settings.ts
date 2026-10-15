@@ -95,10 +95,16 @@ export function keyLabel(code: string): string {
   return code;
 }
 
-/** Assign a key to an action, removing it from any other action. */
+/** Replace an action's primary key (the secondary key stays); the key is removed from other actions. */
 export function rebind(s: Settings, action: Action, code: string): void {
+  const secondary = s.keys[action].slice(1).filter((k) => k !== code);
   for (const a of ACTIONS) s.keys[a] = s.keys[a].filter((k) => k !== code);
-  s.keys[action] = [code, ...s.keys[action].filter((k) => k !== code)].slice(0, 2);
-  // never leave an action unbound
-  for (const a of ACTIONS) if (!s.keys[a].length) s.keys[a] = [DEFAULT_KEYS[a].find((k) => !Object.values(s.keys).flat().includes(k)) ?? DEFAULT_KEYS[a][0]];
+  s.keys[action] = [code, ...secondary].slice(0, 2);
+  // never leave an action unbound: fall back to its default or a spare free key
+  const spare = ['KeyG', 'KeyR', 'KeyT', 'KeyY', 'KeyU', 'KeyI', 'KeyO', 'KeyK', 'KeyL', 'KeyZ', 'KeyX', 'KeyV', 'KeyB', 'KeyN', 'KeyM'];
+  for (const a of ACTIONS)
+    if (!s.keys[a].length) {
+      const used = new Set(Object.values(s.keys).flat());
+      s.keys[a] = [[...DEFAULT_KEYS[a], ...spare].find((k) => !used.has(k))!];
+    }
 }

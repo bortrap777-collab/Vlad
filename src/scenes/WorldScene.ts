@@ -310,8 +310,11 @@ export class WorldScene extends Phaser.Scene {
     this.scripted.forEach((a) => a.update());
     this.dog?.update(dt, this.player.x, moving);
     this.updateBreath(dt);
-    st.x = Math.round(this.player.x);
-    st.facing = this.player.facing;
+    // (skip while a door transition has already switched the level)
+    if (st.level === this.level.id) {
+      st.x = Math.round(this.player.x);
+      st.facing = this.player.facing;
+    }
   }
 
   private onPlayerStep(dist: number, running: boolean) {
@@ -698,6 +701,8 @@ export class WorldScene extends Phaser.Scene {
   private async bulliesCutscene() {
     await this.beginCutscene();
     const sv = services();
+    // quick cut so the staging is the same whichever side Kolya arrives from
+    await this.ui.fade(true, 300);
     const seryogaNpc = this.npcs.get('seryoga');
     const seryoga = this.spawnScripted('seryoga', seryogaNpc?.x ?? 548, 1);
     const olya = this.spawnScripted('olya', 800, -1, 'idle');
@@ -705,13 +710,17 @@ export class WorldScene extends Phaser.Scene {
     const tolstyi = this.spawnScripted('tolstyi', 840, -1, 'laugh');
     olya.face(-1);
     zheka.face(1);
+    this.player.x = 630;
+    this.player.face(1);
     if (this.dog) {
       this.dog.mode = 'sit';
-      this.dog.sprite.x = Math.min(this.player.x - 30, 600);
+      this.dog.sprite.x = 600;
       this.dog.sit();
     }
-    void this.panTo(760, 900);
-    await this.player.walkTo(Math.max(this.player.x, 690), 62, this.skipping);
+    this.cameras.main.stopFollow();
+    this.cameras.main.centerOn(720, VIEW_H / 2);
+    await this.ui.fade(false, 300);
+    await this.player.walkTo(690, 62, this.skipping);
     this.player.face(1);
     await this.wait(300);
     await this.talk('bullies');
@@ -939,6 +948,8 @@ export class WorldScene extends Phaser.Scene {
           scripted: [...self.scripted.entries()].map(([id, a]) => ({ id, x: a.x })),
           dog: self.dog ? { x: self.dog.x, mode: self.dog.mode } : null,
           fight: self.fight ? self.fight.view() : null,
+          music: services().audio.currentMusic,
+          night: self.nightOverlay?.visible ?? false,
         };
       },
       get ui() {

@@ -23,6 +23,8 @@ export function panel(scene: Phaser.Scene, x: number, y: number, w: number, h: n
 
 export interface MenuItem {
   label: string | (() => string);
+  /** Optional right-hand column (slider bar, key binding…), aligned at opts.valueX. */
+  value?: () => string;
   onSelect?: () => void;
   onAdjust?: (dir: -1 | 1) => void;
   disabled?: () => boolean;
@@ -36,12 +38,13 @@ export interface MenuItem {
 export class Menu {
   index = 0;
   readonly texts: Phaser.GameObjects.Text[] = [];
+  readonly values: (Phaser.GameObjects.Text | null)[] = [];
   readonly cursor: Phaser.GameObjects.Text;
   readonly container: Phaser.GameObjects.Container;
   hintText?: Phaser.GameObjects.Text;
   active = true;
 
-  constructor(scene: Phaser.Scene, x: number, y: number, private items: MenuItem[], opts: { size?: number; gap?: number; align?: 'left' | 'center'; title?: boolean; hintY?: number } = {}) {
+  constructor(scene: Phaser.Scene, x: number, y: number, private items: MenuItem[], opts: { size?: number; gap?: number; align?: 'left' | 'center'; title?: boolean; hintY?: number; valueX?: number } = {}) {
     const size = opts.size ?? 22;
     const gap = opts.gap ?? size + 14;
     const align = opts.align ?? 'left';
@@ -60,13 +63,21 @@ export class Menu {
         this.index = i;
         const item = this.items[i];
         if (item.onAdjust && !item.onSelect) {
-          const bounds = t.getBounds();
+          const bounds = (this.values[i] ?? t).getBounds();
           item.onAdjust(p.x / UI_ZOOM < bounds.centerX ? -1 : 1);
         } else this.select();
         this.refresh();
       });
       this.texts.push(t);
       this.container.add(t);
+      if (_it.value && opts.valueX !== undefined) {
+        const v = txt(scene, x + opts.valueX, y + i * gap, '', size, COLORS.text, {}, opts.title ?? true).setOrigin(0, 0.5);
+        v.setInteractive({ useHandCursor: true });
+        v.on('pointerdown', (p: Phaser.Input.Pointer) => t.emit('pointerdown', p));
+        v.on('pointerover', () => t.emit('pointerover'));
+        this.values.push(v);
+        this.container.add(v);
+      } else this.values.push(null);
     });
     this.cursor = txt(scene, 0, 0, '▸', size, COLORS.accentText, {}, true).setOrigin(1, 0.5);
     this.container.add(this.cursor);
@@ -82,13 +93,21 @@ export class Menu {
     return !!this.items[i].disabled?.();
   }
 
+  /** True once the menu (or a parent container) has been destroyed — e.g. by its own action. */
+  get dead(): boolean {
+    return !this.container.scene || this.texts.some((t) => !t.scene);
+  }
+
   refresh() {
+    if (this.dead) return;
     this.items.forEach((it, i) => {
       const t = this.texts[i];
       const label = typeof it.label === 'function' ? it.label() : it.label;
       t.setText(label);
       const dis = this.isDisabled(i);
       t.setColor(dis ? '#58617e' : i === this.index ? COLORS.accentText : COLORS.text);
+      const v = this.values[i];
+      if (v && it.value) v.setText(it.value()).setColor(i === this.index ? COLORS.accentText : COLORS.textDim);
     });
     const cur = this.texts[this.index];
     if (cur) {
@@ -122,7 +141,7 @@ export class Menu {
 
   /** Call every frame while the menu has focus. */
   handleInput(): void {
-    if (!this.active) return;
+    if (!this.active || this.dead) return;
     const inp = services().input;
     if (inp.codePressed('ArrowUp') || inp.codePressed('KeyW')) this.move(-1);
     if (inp.codePressed('ArrowDown') || inp.codePressed('KeyS')) this.move(1);
@@ -143,7 +162,7 @@ export class Menu {
   }
 
   destroy() {
-    this.container.destroy();
+    if (this.container.scene) this.container.destroy();
   }
 }
 

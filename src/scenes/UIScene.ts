@@ -411,7 +411,7 @@ export class UIScene extends Phaser.Scene {
     const sv = services();
     return new Promise((resolve) => {
       const c = this.add.container(0, 0).setDepth(60);
-      const X = UI_W / 2 - 220, Y = 300, W = 440;
+      const X = UI_W / 2 - 220, Y = 300 - 130, W = 440;
       c.add(panel(this, X - 20, Y - 70, W + 40, 150, 0.95));
       const key = keyLabel(sv.settings.keys.interact[0]);
       const title = txt(this, UI_W / 2, Y - 48, `Развязать узел: жми ${key}, когда метка в зелёной зоне`, 17, COLORS.text).setOrigin(0.5);
