@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_KEYS, keyLabel, rebind, type Settings } from '../../src/core/settings';
 
-const base = (): Settings => ({ master: 1, music: 1, sfx: 1, muted: false, textSpeed: 'normal', captions: true, reducedMotion: false, keys: JSON.parse(JSON.stringify(DEFAULT_KEYS)) });
+const base = (): Settings => ({ master: 1, music: 1, sfx: 1, muted: false, textSpeed: 'normal', captions: true, reducedMotion: false, touch: 'auto', keys: JSON.parse(JSON.stringify(DEFAULT_KEYS)) });
 
 describe('key rebinding', () => {
   it('replaces the primary key and keeps the secondary', () => {

@@ -266,7 +266,8 @@ export function drawHead(c: PixelCanvas, spec: CharSpec, hx: number, hy: number,
   const iris = spec.eyes;
   const irisDark = darken(iris, 0.45);
   const lash = P.outline;
-  const drawEye = (ex: number, w: number) => {
+  const sclera = mix(P.white, sk[3], 0.18);
+  const drawEye = (ex: number, w: number, white: -1 | 0 | 1 = 0) => {
     ex = Math.round(ex);
     const ey = Math.round(eyeY - eh / 2);
     if (eyes === 'closed' || (expr === 'happy' && R > 14)) {
@@ -281,6 +282,13 @@ export function drawHead(c: PixelCanvas, spec: CharSpec, hx: number, hy: number,
       if (ty < 0.34) return irisDark;
       return mix(iris, P.white, ty > 0.75 ? 0.15 : 0);
     });
+    // white of the eye on the side away from the gaze (big expressive eyes like the reference)
+    if (white !== 0) {
+      const sx = white < 0 ? ex - 1 : ex + w;
+      c.rect(sx, top + 1, R > 14 ? 1 : 1, h - 1, sclera);
+      c.set(sx, top + h - 1, mix(sclera, sk[2], 0.4));
+      c.set(sx, top - 1, lash);
+    }
     // pupil
     if (R > 14) c.rect(ex + Math.floor(w / 2) - 1 + 1, top + Math.round(h * 0.35), Math.max(1, Math.round(w / 2.6)), Math.max(1, Math.round(h * 0.4)), P.ink);
     // lash line, slightly longer on the outer side
@@ -290,10 +298,10 @@ export function drawHead(c: PixelCanvas, spec: CharSpec, hx: number, hy: number,
     if (R > 14) c.set(ex + 1, top + h - 2, mix(iris, P.white, 0.6));
   };
   if (front) {
-    drawEye(hx - R * 0.42 - ew / 2 + 0.5, ew);
-    drawEye(hx + R * 0.42 - ew / 2 + 0.5, ew);
+    drawEye(hx - R * 0.42 - ew / 2 + 0.5, ew, -1);
+    drawEye(hx + R * 0.42 - ew / 2 + 0.5, ew, 1);
   } else {
-    drawEye(hx + R * 0.36 - ew / 2 + 1, ew);
+    drawEye(hx + R * 0.36 - ew / 2 + 1, ew, -1);
     drawEye(hx - R * 0.28 - (ew - 1) / 2, Math.max(2, ew - 1));
   }
 
@@ -697,9 +705,37 @@ export function drawCharacter(spec: CharSpec, pose: Pose = {}, expr: Expr = 'neu
     c.disc(sFx + armF[0], sFy + armF[1] - 1, limbR + 0.4, (x, y) => rampAt(hands, 0.62 + (hash(x, y) - 0.5) * 0.2, x, y));
   }
 
+  rimLight(c);
   // selective outline
   c.outline((n) => mix(darken(n, 0.72), P.outline, 0.45));
   return c;
+}
+
+/**
+ * Two-tone rim light matching the scenes: warm lamp/sunset light on the leading edge,
+ * cool sky light on the back edge and on top. Applied before the outline pass.
+ */
+export function rimLight(c: PixelCanvas, strength = 1) {
+  const W = c.w, H = c.h;
+  const a = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H && c.alphaAt(x, y) > 127;
+  const warm = 0xffc58a, cool = 0x9db8ff;
+  const snapshot: [number, number, number][] = [];
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      if (!a(x, y)) continue;
+      let k = 0, col = warm;
+      if (!a(x + 1, y)) k = 0.32;
+      else if (!a(x + 2, y)) k = 0.12;
+      else if (!a(x - 1, y)) {
+        k = 0.2;
+        col = cool;
+      } else if (!a(x, y - 1)) {
+        k = 0.14;
+        col = cool;
+      }
+      if (k) snapshot.push([x, y, mix(c.get(x, y), col, k * strength)]);
+    }
+  for (const [x, y, v] of snapshot) c.set(x, y, v);
 }
 
 /** Bust portrait 64×64 for dialogue boxes. */

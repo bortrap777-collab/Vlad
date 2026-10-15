@@ -2,7 +2,7 @@
  * Environment art: sky, parallax city layers, courtyard backdrop, props and the apartment interior.
  * All coordinates are in logical pixels (480×270 viewport).
  */
-import { PixelCanvas, rampAt, hash, mix, bayer, darken, type RGB } from './raster';
+import { PixelCanvas, rampAt, hash, mix, bayer, darken, fbm, vnoise, type RGB } from './raster';
 import { P, type Ramp } from './palette';
 
 export const VIEW_W = 480;
@@ -211,37 +211,71 @@ export const COURTYARD_W = 1920;
 function snowGround(c: PixelCanvas, x0: number, x1: number, warmAt: number[]) {
   for (let y = HORIZON_Y + 4; y < VIEW_H; y++)
     for (let x = x0; x < x1; x++) {
-      let v = 0.5 + (y - HORIZON_Y) * 0.004 + (hash(x >> 1, y, 3) - 0.5) * 0.08;
-      // sastrugi / ruts
-      v += Math.sin(x * 0.07 + y * 0.6) * 0.03;
+      // soft drifts: stretched fractal noise gives long, wind-shaped dunes
+      const dune = fbm(x, y * 3.2, 40, 3);
+      let v = 0.46 + (y - HORIZON_Y) * 0.0042 + (dune - 0.5) * 0.22;
+      // shadowed lee side of each dune (light from the right)
+      const dl = fbm(x + 2, y * 3.2, 40, 3) - dune;
+      v += dl * 2.2;
       let col = rampAt(P.snow, v, x, y);
-      // warm light pools
+      // warm light pools around lamps and the entrance
       for (const wx of warmAt) {
-        const d = Math.hypot((x - wx) / 60, (y - GROUND_Y + 6) / 18);
-        if (d < 1) col = mix(col, rampAt(P.snowWarm, 0.75, x, y), (1 - d) * 0.55);
+        const d = Math.hypot((x - wx) / 64, (y - GROUND_Y + 6) / 20);
+        if (d < 1) col = mix(col, rampAt(P.snowWarm, 0.72 + (1 - d) * 0.2, x, y), (1 - d) * (1 - d) * 0.75);
       }
+      // frost glitter
+      if (hash(x, y, 99) > 0.996) col = mix(col, P.white, 0.8);
       c.set(x, y, col);
     }
 }
 
 function asphaltPath(c: PixelCanvas, warmAt: number[]) {
-  const top = GROUND_Y - 14, bot = GROUND_Y + 12;
-  for (let y = top; y < bot; y++)
+  const top = GROUND_Y - 15, bot = GROUND_Y + 13;
+  const mid = (top + bot) / 2;
+  for (let y = top - 3; y < bot + 3; y++)
     for (let x = 0; x < COURTYARD_W; x++) {
-      const edge = Math.min(y - top, bot - y);
-      const n = hash(x >> 2, y >> 1, 9);
-      // ragged snow edges / snow patches on the asphalt
-      if (edge < 3 && n > 0.45 + edge * 0.12) continue;
-      const patch = hash(x >> 4, y >> 2, 21) > 0.82 && hash(x >> 2, y, 4) > 0.3;
-      if (patch) {
-        c.set(x, y, rampAt(P.snow, 0.62 + (hash(x, y) - 0.5) * 0.1, x, y));
+      // snow cover: organic blobs, thicker towards the edges of the path
+      const edge = Math.abs(y - mid) / ((bot - top) / 2); // 0 centre … 1 edge
+      const n = fbm(x, y * 2.6, 26, 11);
+      const cover = n + Math.pow(Math.max(0, edge), 3) * 0.55 - 0.08;
+      // two wheel ruts / foot-trodden lanes keep the asphalt bare
+      const lane = Math.min(Math.abs(y - (GROUND_Y - 3)), Math.abs(y - (GROUND_Y + 5)));
+      const bare = cover - (lane < 3 ? 0.18 : 0);
+      if (y < top || y >= bot) {
+        if (bare < 0.62) continue; // ragged outer rim only
+      }
+      if (bare > 0.58) {
+        // packed snow patch with a light top lip and a shadowed lower lip
+        const above = fbm(x, (y - 1) * 2.6, 26, 11) + Math.pow(Math.max(0, Math.abs(y - 1 - mid) / ((bot - top) / 2)), 3) * 0.55 - 0.08 - (Math.min(Math.abs(y - 1 - (GROUND_Y - 3)), Math.abs(y - 1 - (GROUND_Y + 5))) < 3 ? 0.18 : 0);
+        const below = fbm(x, (y + 1) * 2.6, 26, 11) + Math.pow(Math.max(0, Math.abs(y + 1 - mid) / ((bot - top) / 2)), 3) * 0.55 - 0.08 - (Math.min(Math.abs(y + 1 - (GROUND_Y - 3)), Math.abs(y + 1 - (GROUND_Y + 5))) < 3 ? 0.18 : 0);
+        let v = 0.6 + (n - 0.5) * 0.2;
+        if (above <= 0.58) v += 0.18; // lit top edge
+        if (below <= 0.58) v -= 0.22; // shadow where it meets the asphalt
+        let col = rampAt(P.snow, v, x, y);
+        for (const wx of warmAt) {
+          const d = Math.abs(x - wx) / 50;
+          if (d < 1) col = mix(col, P.snowWarm[3], (1 - d) * (1 - d) * 0.45);
+        }
+        c.set(x, y, col);
         continue;
       }
-      let col = rampAt(P.asphalt, 0.45 + (hash(x, y, 5) - 0.5) * 0.25, x, y);
-      for (const wx of warmAt) {
-        const d = Math.abs(x - wx) / 22;
-        // wet reflection streak of a lamp
-        if (d < 1 && y > GROUND_Y - 4) col = mix(col, P.windowWarm[2], (1 - d) * 0.35 * (bayer(x, y) > 0.5 ? 1 : 0.4));
+      // wet asphalt: grain + darker puddles that mirror the lights
+      const puddle = fbm(x, y * 3, 34, 23);
+      const v = 0.52 + (hash(x, y, 5) - 0.5) * 0.2 + (fbm(x, y, 9, 31) - 0.5) * 0.25 + (puddle > 0.6 ? -0.12 : 0);
+      let col = rampAt(P.asphalt, v, x, y);
+      if (puddle > 0.6) {
+        // sky reflection
+        col = mix(col, P.skyDusk[3], 0.25 + (puddle - 0.6) * 0.8);
+        for (const wx of warmAt) {
+          const d = Math.abs(x - wx) / 9;
+          const streak = d < 1 && bayer(x, y) < 1 - d;
+          if (streak) col = mix(col, P.windowWarm[3], 0.6 * (1 - d));
+        }
+      } else {
+        for (const wx of warmAt) {
+          const d = Math.abs(x - wx) / 30;
+          if (d < 1 && y > GROUND_Y - 6) col = mix(col, P.windowWarm[1], (1 - d) * 0.22);
+        }
       }
       c.set(x, y, col);
     }
@@ -573,5 +607,214 @@ export function drawFootprint(): PixelCanvas {
 export function drawShadow(w: number): PixelCanvas {
   const c = new PixelCanvas(w, 5);
   c.ellipse(w / 2, 2.5, w / 2, 2.5, () => 0x10142a);
+  return c;
+}
+
+// ---------------------------------------------------------------- 90s courtyard props
+const CYR: Record<string, string[]> = {
+  А: ['010', '101', '111', '101', '101'], Б: ['111', '100', '110', '101', '110'], В: ['110', '101', '110', '101', '110'],
+  Д: ['0110', '0110', '0110', '1111', '1001'], Е: ['111', '100', '110', '100', '111'], К: ['101', '101', '110', '101', '101'],
+  Л: ['011', '101', '101', '101', '101'], Н: ['101', '101', '111', '101', '101'], О: ['010', '101', '101', '101', '010'],
+  П: ['111', '101', '101', '101', '101'], Р: ['110', '101', '110', '100', '100'], С: ['011', '100', '100', '100', '011'],
+  Т: ['111', '010', '010', '010', '010'], У: ['101', '101', '011', '001', '110'], Ф: ['01110', '10101', '10101', '01110', '00100'],
+  Ы: ['10001', '10001', '11101', '10101', '11101'], Х: ['101', '101', '010', '101', '101'], Ь: ['100', '100', '110', '101', '110'],
+  ' ': ['00', '00', '00', '00', '00'],
+};
+
+/** Tiny 5-px Cyrillic sign lettering. Returns the drawn width. */
+export function drawSign(c: PixelCanvas, x: number, y: number, text: string, col: RGB): number {
+  let cx = x;
+  for (const ch of text) {
+    const g = CYR[ch] ?? CYR[' '];
+    g.forEach((row, r) => [...row].forEach((b, k) => b === '1' && c.set(cx + k, y + r, col)));
+    cx += g[0].length + 1;
+  }
+  return cx - x - 1;
+}
+
+export function signWidth(text: string): number {
+  return [...text].reduce((w, ch) => w + (CYR[ch] ?? CYR[' '])[0].length + 1, -1);
+}
+
+function snowCap(c: PixelCanvas, x0: number, x1: number, y: number, depth = 3, seed = 1) {
+  for (let x = x0; x <= x1; x++) {
+    const h = Math.max(1, Math.round(depth * (0.6 + vnoise(x, 0, 5, seed) * 0.6)) - (x === x0 || x === x1 ? 1 : 0));
+    for (let k = 0; k < h; k++) c.set(x, y - k, rampAt(P.snow, 0.72 + k * 0.06, x, y - k));
+  }
+}
+
+/** Roadside kiosk («ларёк») with a lit, barred window full of goods. */
+export function drawKiosk(): PixelCanvas {
+  const W = 74, H = 66;
+  const c = new PixelCanvas(W, H);
+  const body = [0x2a3a4a, 0x3a5064, 0x4e6a80, 0x66849a, 0x84a2b6];
+  c.rect(2, 14, W - 4, H - 14, (x, y) => rampAt(body, 0.3 + ((x - 2) / (W - 4)) * 0.35 + ((x % 6) === 0 ? -0.12 : 0) + (hash(x, y) > 0.97 ? -0.15 : 0), x, y));
+  // rust at the bottom
+  for (let x = 2; x < W - 2; x++) for (let y = H - 6; y < H; y++) if (vnoise(x, y, 3, 4) > 0.5) c.set(x, y, mix(c.get(x, y), P.rust[2], 0.5));
+  // sign board
+  c.rect(0, 4, W, 11, (x, y) => rampAt(P.redMetal, 0.55 + (y === 4 ? 0.2 : 0), x, y));
+  const t = 'ПРОДУКТЫ';
+  drawSign(c, Math.round((W - signWidth(t)) / 2), 7, t, 0xfff0c0);
+  // roof with snow
+  c.rect(-1, 2, W + 2, 2, body[0]);
+  snowCap(c, -1, W, 2, 4, 7);
+  // lit window
+  const wx = 8, wy = 20, ww = W - 16, wh = 26;
+  c.rect(wx, wy, ww, wh, (x, y) => rampAt(P.windowWarm, 0.62 + ((y - wy) / wh) * 0.25 - Math.abs(x - wx - ww / 2) / ww * 0.3, x, y));
+  // shelves with goods
+  const goods = [0xd84040, 0x40a0e0, 0xf0d040, 0x60c060, 0xe08040, 0xb060c0, 0xf0f0f0, 0x303030];
+  for (const sy of [wy + 9, wy + 18]) {
+    c.hline(wx + 1, wx + ww - 2, sy, P.wood[1]);
+    for (let x = wx + 2; x < wx + ww - 3; x += 3) {
+      const h = 2 + Math.floor(hash(x, sy) * 4);
+      c.rect(x, sy - h, 2, h, goods[Math.floor(hash(x, sy, 3) * goods.length)]);
+    }
+  }
+  // grate over the window
+  for (let x = wx; x <= wx + ww; x += 4) c.vline(x, wy, wy + wh, P.metal[1]);
+  c.hline(wx, wx + ww, wy + 13, P.metal[1]);
+  c.rect(wx - 1, wy - 1, ww + 2, 1, P.metal[0]);
+  c.rect(wx - 1, wy + wh, ww + 2, 2, P.metal[2]);
+  // small serving hatch with a price tag
+  c.rect(W / 2 - 6, wy + wh - 6, 12, 6, P.windowWarm[4]);
+  c.rect(W / 2 - 2, wy + wh - 5, 4, 3, 0xffffff);
+  // snow drifted at the base
+  for (let x = 0; x < W; x++) for (let y = H - 1 - Math.round(vnoise(x, 0, 6, 9) * 4); y < H; y++) c.set(x, y, rampAt(P.snow, 0.7, x, y));
+  c.outline((n) => darken(n, 0.7));
+  return c;
+}
+
+/** Soviet street payphone booth («таксофон»). */
+export function drawPhoneBooth(): PixelCanvas {
+  const W = 38, H = 74;
+  const c = new PixelCanvas(W, H);
+  const frame = P.redMetal;
+  // glass with cold reflections
+  c.rect(3, 12, W - 6, H - 14, (x, y) => {
+    const streak = ((x + y) % 11 < 2) ? 0.25 : 0;
+    return mix(rampAt([0x1a2440, 0x24345a, 0x34486e], 0.4 + (y - 12) / H * 0.4, x, y), 0xa8c0e8, 0.12 + streak);
+  });
+  // frame
+  for (const x of [2, W / 2 - 1, W - 3]) c.rect(x, 10, 2, H - 10, (xx, y) => rampAt(frame, xx === x ? 0.4 : 0.6, xx, y));
+  c.rect(2, 10, W - 4, 3, frame[3]);
+  c.rect(2, H / 2 + 4, W - 4, 2, frame[2]);
+  c.rect(2, H - 3, W - 4, 3, frame[1]);
+  // sign panel
+  c.rect(1, 1, W - 2, 9, (x, y) => rampAt([0xc8ccd8, 0xe0e4ee, 0xf4f6fb], 0.5 + (y === 1 ? 0.3 : 0), x, y));
+  const t = 'ТАКСОФОН';
+  drawSign(c, Math.round((W - signWidth(t)) / 2), 3, t, 0x2a4a9a);
+  snowCap(c, 0, W - 1, 0, 3, 3);
+  // the phone inside
+  c.rect(W / 2 + 3, 28, 9, 12, P.metal[2]);
+  c.rect(W / 2 + 4, 30, 3, 6, P.metal[0]);
+  c.line(W / 2 + 10, 36, W / 2 + 12, 48, P.ink); // dangling, cut cord
+  // snow at the base
+  for (let x = 0; x < W; x++) for (let y = H - 1 - Math.round(vnoise(x, 0, 5, 2) * 3); y < H; y++) c.set(x, y, rampAt(P.snow, 0.72, x, y));
+  c.outline((n) => darken(n, 0.7));
+  return c;
+}
+
+export function drawSnowman(): PixelCanvas {
+  const c = new PixelCanvas(34, 46);
+  const ball = (cx: number, cy: number, r: number) =>
+    c.ellipse(cx, cy, r, r * 0.92, (x, y, nx, ny) => rampAt(P.snow, 0.78 + nx * 0.18 - ny * 0.12 + (hash(x, y) - 0.5) * 0.05, x, y));
+  ball(17, 36, 10);
+  ball(17, 22, 7.5);
+  ball(17, 11, 5.5);
+  // twig arms
+  c.line(10, 20, 2, 14, P.bark[2]);
+  c.line(4, 15, 2, 12, P.bark[2]);
+  c.line(24, 20, 31, 15, P.bark[2]);
+  // bucket hat, coal eyes, carrot nose, buttons, scarf
+  c.poly([[12, 6], [22, 6], [21, 1], [13, 1]], (x, y) => rampAt(P.tin, 0.3 + (x - 12) / 10 * 0.5, x, y));
+  c.set(15, 10, P.ink);
+  c.set(19, 10, P.ink);
+  c.line(18, 12, 23, 13, 0xe07a2a);
+  c.set(18, 13, 0xc0601a);
+  for (const y of [20, 24, 33]) c.set(17, y, P.ink);
+  c.rect(11, 16, 13, 3, (x) => (x % 2 ? 0xc03040 : 0xe05060));
+  c.rect(20, 18, 3, 6, (_x, y) => (y % 2 ? 0xc03040 : 0xe05060));
+  c.outline((n) => darken(n, 0.6));
+  return c;
+}
+
+export function drawSled(): PixelCanvas {
+  const c = new PixelCanvas(30, 12);
+  // runners
+  c.line(1, 10, 27, 10, P.redMetal[2]);
+  c.line(27, 10, 29, 7, P.redMetal[2]);
+  c.vline(5, 7, 10, P.redMetal[1]);
+  c.vline(22, 7, 10, P.redMetal[1]);
+  // wooden slats
+  for (let x = 2; x < 26; x += 4) c.rect(x, 5, 3, 2, (xx, y) => rampAt(P.wood, 0.55 + (xx === x ? -0.15 : 0), xx, y));
+  c.hline(2, 25, 4, P.snow[5]);
+  c.line(28, 7, 29, 2, 0xb8a888); // rope
+  c.outline((n) => darken(n, 0.7));
+  return c;
+}
+
+// ---------------------------------------------------------------- light & grading overlays
+/** Dithered light cone under a street lamp (drawn additively in-engine). */
+export function drawCone(): PixelCanvas {
+  const W = 72, H = 104;
+  const c = new PixelCanvas(W, H);
+  for (let y = 0; y < H; y++) {
+    const half = 2 + (y / H) * (W / 2 - 2);
+    for (let x = 0; x < W; x++) {
+      const dx = Math.abs(x + 0.5 - W / 2) / half;
+      if (dx > 1) continue;
+      const a = (1 - y / H) * 0.55 * (1 - dx * dx);
+      // stepped + ordered dither so the beam reads as pixel art, not a smooth gradient
+      const q = Math.floor(a * 6) / 6;
+      if (q <= 0 || bayer(x, y) > q * 1.6) continue;
+      c.set(x, y, 0xffd9a0, Math.min(1, q + 0.15));
+    }
+  }
+  return c;
+}
+
+/** Screen-space vignette: darker, cooler corners. */
+export function drawVignette(): PixelCanvas {
+  const c = new PixelCanvas(VIEW_W, VIEW_H);
+  for (let y = 0; y < VIEW_H; y++)
+    for (let x = 0; x < VIEW_W; x++) {
+      const nx = (x - VIEW_W / 2) / (VIEW_W / 2), ny = (y - VIEW_H / 2) / (VIEW_H / 2);
+      const d = Math.max(0, Math.hypot(nx * 0.85, ny) - 0.72);
+      const a = Math.min(0.6, d * 1.15);
+      if (a <= 0.02) continue;
+      c.set(x, y, 0x05060f, Math.floor(a * 10) / 10 + (bayer(x, y) > 0.5 ? 0.05 : 0));
+    }
+  return c;
+}
+
+/** Warm sunset bloom from the lower right, as in the reference image (added in-engine at dusk). */
+export function drawWarmGrade(): PixelCanvas {
+  const c = new PixelCanvas(VIEW_W, VIEW_H);
+  for (let y = 0; y < VIEW_H; y++)
+    for (let x = 0; x < VIEW_W; x++) {
+      const d = Math.hypot((x - VIEW_W * 1.05) / (VIEW_W * 0.75), (y - VIEW_H * 0.95) / (VIEW_H * 0.8));
+      const a = Math.max(0, 1 - d) * 0.42;
+      const q = Math.floor(a * 12) / 12;
+      if (q <= 0) continue;
+      c.set(x, y, 0xff9a6a, q + (bayer(x, y) > 0.5 ? 0.02 : 0));
+    }
+  return c;
+}
+
+/** Cold dusk light falling from the kitchen window onto the floor. */
+export function drawWindowBeam(): PixelCanvas {
+  const W = 120, H = 170;
+  const c = new PixelCanvas(W, H);
+  // parallelogram slanting down-right from a 60-px wide window
+  for (let y = 0; y < H; y++) {
+    const x0 = 6 + y * 0.32, x1 = 66 + y * 0.32;
+    for (let x = Math.floor(x0); x < x1 && x < W; x++) {
+      const a = 0.32 * (1 - y / H) + 0.05;
+      if (bayer(x, y) > a * 2.2) continue;
+      // window cross shadow
+      if (Math.abs(x - (36 + y * 0.32)) < 1.5) continue;
+      c.set(x, y, 0x9fb8ff, Math.min(1, a + 0.2));
+    }
+  }
   return c;
 }

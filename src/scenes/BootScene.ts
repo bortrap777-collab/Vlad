@@ -4,6 +4,29 @@ import { COLORS, FONT_TEXT, UI_W, UI_ZOOM } from '../config';
 
 const BASE = 'assets/gen/';
 
+/**
+ * The single-file build (one .html for phones) embeds every asset as base64 in
+ * window.__KOLYA_INLINE__; those are turned into blob: URLs so the loader works offline from file://.
+ */
+const INLINE = (globalThis as unknown as { __KOLYA_INLINE__?: Record<string, string> }).__KOLYA_INLINE__;
+const blobUrls = new Map<string, string>();
+function assetUrl(path: string): string | null {
+  if (!INLINE) return path;
+  const cached = blobUrls.get(path);
+  if (cached) return cached;
+  const data = INLINE[path];
+  if (!data) return null;
+  const [head, b64] = data.split(',');
+  const mime = head.slice(5, head.indexOf(';'));
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  blobUrls.set(path, url);
+  return url;
+}
+const url = (p: string) => assetUrl(BASE + p)!;
+
 export interface Manifest {
   frame: { w: number; h: number };
   sheetCols: number;
@@ -37,17 +60,22 @@ export class BootScene extends Phaser.Scene {
     });
 
     for (const id of Object.keys(MANIFEST.chars)) {
-      this.load.spritesheet(`char_${id}`, `${BASE}chars/${id}.png`, { frameWidth: MANIFEST.frame.w, frameHeight: MANIFEST.frame.h });
-      this.load.spritesheet(`portrait_${id}`, `${BASE}portraits/${id}.png`, { frameWidth: 64, frameHeight: 64 });
+      this.load.spritesheet(`char_${id}`, url(`chars/${id}.png`), { frameWidth: MANIFEST.frame.w, frameHeight: MANIFEST.frame.h });
+      this.load.spritesheet(`portrait_${id}`, url(`portraits/${id}.png`), { frameWidth: 64, frameHeight: 64 });
     }
-    this.load.spritesheet('dog', `${BASE}dog.png`, { frameWidth: MANIFEST.dog.w, frameHeight: MANIFEST.dog.h });
-    this.load.spritesheet('items', `${BASE}items.png`, { frameWidth: 16, frameHeight: 16 });
+    this.load.spritesheet('dog', url('dog.png'), { frameWidth: MANIFEST.dog.w, frameHeight: MANIFEST.dog.h });
+    this.load.spritesheet('items', url('items.png'), { frameWidth: 16, frameHeight: 16 });
     for (const key of Object.keys(MANIFEST.images)) {
       if (key === 'dog' || key === 'items') continue;
-      this.load.image(key, `${BASE}${key}.png`);
+      this.load.image(key, url(`${key}.png`));
     }
     const formats = MANIFEST.audioFormats ?? ['wav'];
-    for (const a of MANIFEST.audio) this.load.audio(a, formats.map((f) => `${BASE}audio/${a}.${f}`));
+    for (const a of MANIFEST.audio) {
+      const urls = formats.map((f) => assetUrl(`${BASE}audio/${a}.${f}`)).filter((u): u is string => !!u);
+      // blob: URLs carry no extension, so tell Phaser the format explicitly
+      if (INLINE) this.load.audio(a, urls.map((u, i) => ({ url: u, type: formats.filter((f) => INLINE[`${BASE}audio/${a}.${f}`])[i] })) as unknown as string[]);
+      else this.load.audio(a, urls);
+    }
   }
 
   create() {

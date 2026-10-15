@@ -51,6 +51,14 @@ export function drawApartment(): PixelCanvas {
       }
       c.set(x, y, col);
     }
+  // ambient occlusion: walls darken towards the floor and the ceiling corner
+  for (let y = CEIL; y < FLOOR_TOP; y++)
+    for (let x = 0; x < W; x++) {
+      const low = Math.max(0, (y - (FLOOR_TOP - 34)) / 34);
+      const high = Math.max(0, 1 - (y - CEIL) / 14);
+      const k = low * 0.28 + high * 0.3;
+      if (k > 0 && bayer(x, y) < 0.85) c.set(x, y, mix(c.get(x, y), 0x0d0f1e, k));
+    }
   // baseboard + floor
   c.rect(0, FLOOR_TOP - 4, W, 4, (x, y) => rampAt(P.wood, 0.3 + (y === FLOOR_TOP - 4 ? 0.3 : 0), x, y));
   for (let y = FLOOR_TOP; y < 270; y++)
@@ -68,8 +76,9 @@ export function drawApartment(): PixelCanvas {
     return rampAt(P.carpet, border ? 0.25 : pat ? 0.7 : 0.45, x, y);
   });
 
-  // doorframes between zones
+  // doorframes between zones (with a soft cast shadow on the wall)
   for (const dx of [170, 404]) {
+    for (let y = CEIL; y < FLOOR_TOP; y++) for (let x = dx + 4; x < dx + 9; x++) c.set(x, y, mix(c.get(x, y), 0x0d0f1e, 0.22 * (1 - (x - dx - 4) / 5)));
     c.rect(dx - 3, CEIL, 7, FLOOR_TOP - CEIL, (x, y) => rampAt(P.wood.map((v) => mix(v, 0xe0d8c8, 0.55)), 0.35 + (x - dx + 3) / 7 * 0.4, x, y));
   }
 

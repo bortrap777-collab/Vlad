@@ -62,7 +62,7 @@ export interface TriggerDef {
 export interface LightDef {
   x: number;
   y: number;
-  texture: 'glow_warm' | 'glow_small' | 'glow_cold';
+  texture: 'glow_warm' | 'glow_small' | 'glow_cold' | 'beam';
   scale?: number;
   alpha?: number;
   /** Only shown at night (finale). */
@@ -143,6 +143,7 @@ export const LEVELS: Record<LevelId, LevelDef> = {
       { x: 520, y: 44, texture: 'glow_warm', scale: 1.5, alpha: 0.5 },
       { x: 427, y: 142, texture: 'glow_small', scale: 1.4, alpha: 0.9 },
       { x: 578, y: 176, texture: 'glow_cold', scale: 0.5, alpha: 0.35, nightOnly: true },
+      { x: 316, y: 149, texture: 'beam', scale: 1, alpha: 0.45 },
     ],
   },
 
@@ -164,11 +165,14 @@ export const LEVELS: Record<LevelId, LevelDef> = {
     props: [
       { id: 'prop.lamp.entrance', texture: 'lamp', x: 140, y: 226, layer: 'back' },
       { id: 'prop.bench', texture: 'bench', x: 300, y: 228, layer: 'back' },
+      { id: 'prop.phonebooth', texture: 'phonebooth', x: 356, y: 228, layer: 'back' },
       { id: 'prop.drift.west', texture: 'drift_a', x: 400, y: 270, layer: 'front' },
       { id: 'prop.slide', texture: 'slide', x: 520, y: 216, layer: 'back' },
       { id: 'prop.lamp.playground', texture: 'lamp', x: 600, y: 270, layer: 'front' },
       { id: 'prop.swings', texture: 'swings', x: 760, y: 216, layer: 'back' },
+      { id: 'prop.sled', texture: 'sled', x: 652, y: 230, layer: 'back' },
       { id: 'prop.climber', texture: 'climber', x: 920, y: 212, layer: 'back' },
+      { id: 'prop.snowman', texture: 'snowman', x: 972, y: 226, layer: 'back' },
       { id: 'prop.car', texture: 'car', x: 1052, y: 226, layer: 'back' },
       { id: 'prop.lamp.car', texture: 'lamp', x: 1100, y: 226, layer: 'back' },
       { id: 'prop.trash', texture: 'trash', x: 1140, y: 224, layer: 'back' },
@@ -176,6 +180,7 @@ export const LEVELS: Record<LevelId, LevelDef> = {
       { id: 'prop.post', texture: 'post', x: 1508, y: 234, layer: 'back' },
       { id: 'prop.lamp.garages', texture: 'lamp', x: 1470, y: 270, layer: 'front' },
       { id: 'prop.drift.east', texture: 'drift_a', x: 1680, y: 270, layer: 'front' },
+      { id: 'prop.kiosk', texture: 'kiosk', x: 1716, y: 226, layer: 'back' },
       { id: 'prop.lamp.arch', texture: 'lamp', x: 1770, y: 226, layer: 'back' },
     ],
     npcs: [
@@ -190,6 +195,10 @@ export const LEVELS: Record<LevelId, LevelDef> = {
     interactables: [
       { id: 'entrance', x: 196, range: 18, label: 'Войти в подъезд', priority: 2, action: { door: 'apartment', spawnX: 72 } },
       { id: 'board', x: 222, range: 8, label: 'Читать объявление', action: { dialogue: 'ins_board' } },
+      { id: 'phonebooth', x: 356, range: 14, label: 'Осмотреть', action: { dialogue: 'ins_phone' } },
+      { id: 'sled', x: 652, range: 10, label: 'Осмотреть', action: { dialogue: 'ins_sled' } },
+      { id: 'snowman', x: 972, range: 14, label: 'Осмотреть', action: { dialogue: 'ins_snowman' } },
+      { id: 'kiosk', x: 1716, range: 26, label: 'Осмотреть', action: { dialogue: 'ins_kiosk' } },
       { id: 'slide', x: 548, range: 22, label: 'Осмотреть', cond: { not: { stage: 'defend' } }, action: { dialogue: 'ins_slide' } },
       { id: 'swings', x: 750, range: 16, label: 'Осмотреть', action: { dialogue: 'ins_swings' } },
       { id: 'climber', x: 920, range: 26, label: 'Осмотреть', action: { dialogue: 'ins_climber' } },
@@ -209,6 +218,7 @@ export const LEVELS: Record<LevelId, LevelDef> = {
       // lamp-post glows are generated from the lamp props in WorldScene
       { x: 196, y: 159, texture: 'glow_small', scale: 1.3, alpha: 0.9 },
       { x: 1298, y: 184, texture: 'glow_small', scale: 1.8, alpha: 0.8 },
+      { x: 1716, y: 192, texture: 'glow_warm', scale: 1.1, alpha: 0.45 },
     ],
   },
 };

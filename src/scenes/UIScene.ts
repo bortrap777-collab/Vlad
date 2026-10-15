@@ -20,6 +20,7 @@ import { ScreenStack, controlsScreen, settingsScreen, slotsScreen, type Screen }
 import { MANIFEST } from './BootScene';
 import type { WorldScene } from './WorldScene';
 import type { Fight } from '../world/Fight';
+import type { TouchContext } from '../ui/TouchControls';
 
 interface Toast {
   c: Phaser.GameObjects.Container;
@@ -129,7 +130,7 @@ export class UIScene extends Phaser.Scene {
     const w = Math.max(200, this.trackerText.width + 28), h = this.trackerText.height + 36;
     g.clear().fillStyle(0x070913, 0.72).fillRect(0, 0, w, h).fillStyle(COLORS.accent, 1).fillRect(0, 0, 3, h);
     const k = services().settings.keys;
-    this.trackerHint.setText(`Цель · ${keyLabel(k.journal[0])} — дневник`);
+    this.trackerHint.setText(services().isTouch ? 'Цель' : `Цель · ${keyLabel(k.journal[0])} — дневник`);
   }
 
   setPrompt(p: { label: string; x: number } | null) {
@@ -139,11 +140,18 @@ export class UIScene extends Phaser.Scene {
       this.promptBox.setVisible(false);
       return;
     }
-    const key = keyLabel(services().settings.keys.interact[0]);
-    this.promptText.setText(`[${key}]  ${p.label}`);
+    const sv = services();
+    const key = keyLabel(sv.settings.keys.interact[0]);
+    this.promptText.setText(sv.isTouch ? `${p.label}` : `[${key}]  ${p.label}`);
     const g = this.promptBox.getAt(0) as Phaser.GameObjects.Graphics;
-    const w = this.promptText.width + 22, h = 30;
+    const w = this.promptText.width + (sv.isTouch ? 34 : 22), h = sv.isTouch ? 38 : 30;
     g.clear().fillStyle(0x070913, 0.85).fillRect(-w / 2, -h / 2, w, h).lineStyle(2, COLORS.accent, 1).strokeRect(-w / 2, -h / 2, w, h);
+    // on touch screens the prompt itself is a button
+    this.promptBox.setSize(w, h);
+    if (!this.promptBox.input) {
+      this.promptBox.setInteractive({ useHandCursor: true });
+      this.promptBox.on('pointerdown', () => services().input.tap('interact'));
+    }
     this.promptBox.setVisible(true);
   }
 
@@ -225,11 +233,16 @@ export class UIScene extends Phaser.Scene {
     const reduce = services().settings.reducedMotion;
     this.tweens.add({ targets: this.bars[0], y: on ? 0 : -40, duration: reduce ? 0 : 400 });
     this.tweens.add({ targets: this.bars[1], y: on ? UI_H - 40 : UI_H, duration: reduce ? 0 : 400 });
-    this.skipHint.setVisible(on);
+    this.skipHint.setVisible(on && !services().isTouch);
     this.tracker.setVisible(!on);
   }
 
   tutorial() {
+    if (services().isTouch) {
+      this.toast('Стрелки внизу слева — идти. «Действие» — говорить и осматривать.');
+      this.time.delayedCall(1200, () => this.toast('Можно нажимать прямо на подсказки и на окно с репликами.'));
+      return;
+    }
     const k = services().settings.keys;
     this.toast(`${keyLabel(k.left[0])}/${keyLabel(k.right[0])} или стрелки — идти · ${keyLabel(k.interact[0])} — действие`);
     this.time.delayedCall(1200, () => this.toast(`${keyLabel(k.journal[0])} — дневник · ${keyLabel(k.pause[0])} — пауза`));
@@ -416,7 +429,7 @@ export class UIScene extends Phaser.Scene {
       const X = UI_W / 2 - 220, Y = 300 - 130, W = 440;
       c.add(panel(this, X - 20, Y - 70, W + 40, 150, 0.95));
       const key = keyLabel(sv.settings.keys.interact[0]);
-      const title = txt(this, UI_W / 2, Y - 48, `Развязать узел: жми ${key}, когда метка в зелёной зоне`, 17, COLORS.text).setOrigin(0.5);
+      const title = txt(this, UI_W / 2, Y - 48, sv.isTouch ? 'Развязать узел: жми «Тянуть», когда метка в зелёной зоне' : `Развязать узел: жми ${key}, когда метка в зелёной зоне`, 17, COLORS.text).setOrigin(0.5);
       const progress = txt(this, UI_W / 2, Y + 50, '', 16, COLORS.accentText, {}, true).setOrigin(0.5);
       const g = this.add.graphics();
       c.add([title, progress, g]);
@@ -434,8 +447,9 @@ export class UIScene extends Phaser.Scene {
         g.fillStyle(0x9be0a8, 1).fillRect(X + zoneX, Y - 12, zoneW, 3);
         g.fillStyle(0xffd27a, 1).fillRect(X + pos * W - 2, Y - 18, 4, 36);
         g.lineStyle(2, COLORS.panelEdge, 1).strokeRect(X, Y - 12, W, 24);
-        progress.setText(`Узел: ${'●'.repeat(got)}${'○'.repeat(need - got)}   ·   Esc — отложить`);
+        progress.setText(`Узел: ${'●'.repeat(got)}${'○'.repeat(need - got)}   ·   ${sv.isTouch ? 'отложить' : 'Esc — отложить'}`);
       };
+      progress.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.minigame && finish(false));
       const finish = (ok: boolean) => {
         this.minigame = null;
         c.destroy();
@@ -489,8 +503,10 @@ export class UIScene extends Phaser.Scene {
     this.fightHud = this.add.container(0, 0).setDepth(20);
     this.tracker.setVisible(false);
     const k = services().settings.keys;
-    const help = `${keyLabel(k.block[0])} — блок   ·   ${keyLabel(k.sprint[0])} — увернуться   ·   ${keyLabel(k.interact[0])} — толкнуть, когда противник раскрылся`;
-    this.fightHelp = txt(this, UI_W / 2, UI_H - 26, help, 16, COLORS.text, { backgroundColor: '#070913cc', padding: { x: 10, y: 5 } }).setOrigin(0.5).setDepth(21);
+    const help = services().isTouch
+      ? '«Блок» — защита   ·   «Уворот» — отскок   ·   «Толкнуть» — когда противник раскрылся'
+      : `${keyLabel(k.block[0])} — блок   ·   ${keyLabel(k.sprint[0])} — увернуться   ·   ${keyLabel(k.interact[0])} — толкнуть, когда противник раскрылся`;
+    this.fightHelp = txt(this, UI_W / 2, services().isTouch ? 104 : UI_H - 26, help, 16, COLORS.text, { backgroundColor: '#070913cc', padding: { x: 10, y: 5 } }).setOrigin(0.5).setDepth(21);
     this.toast('Не нападай первым. Блокируй удар — и толкай, пока противник открыт.');
   }
 
@@ -553,6 +569,7 @@ export class UIScene extends Phaser.Scene {
     const dt = Math.min(0.05, deltaMs / 1000);
     this.positionPrompt();
     if (this.fight) this.drawFightHud();
+    sv.touch?.setContext(this.touchContext(), this.cutsceneOn);
 
     if (this.stack.size) {
       this.stack.update();
@@ -579,6 +596,15 @@ export class UIScene extends Phaser.Scene {
         this.dialogue.update(dt);
       }
     }
+  }
+
+  private touchContext(): TouchContext {
+    if (this.stack.size || this.history || this.journal.open || this.overlayMenu || !this.cameras.main.visible) return 'menu';
+    if (this.minigame) return 'minigame';
+    if (this.dialogueActive) return 'dialogue';
+    if (this.fight) return 'fight';
+    if (this.cutsceneOn || this.world?.busy) return 'cutscene';
+    return 'world';
   }
 
   /** Read-only snapshot for automated tests. */

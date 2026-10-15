@@ -10,8 +10,12 @@ function pickZoom(): number {
   const q = Number(new URLSearchParams(window.location.search).get('zoom'));
   if (q >= 2 && q <= 4) return Math.floor(q);
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const fit = Math.min((window.screen?.width || window.innerWidth) * dpr / 480, (window.screen?.height || window.innerHeight) * dpr / 270);
-  return Math.max(2, Math.min(4, Math.floor(fit)));
+  const sw = Math.max(window.screen?.width || 0, window.screen?.height || 0) || window.innerWidth;
+  const sh = Math.min(window.screen?.width || 0, window.screen?.height || 0) || window.innerHeight;
+  const fit = Math.min((sw * dpr) / 480, (sh * dpr) / 270);
+  // phones and tablets: cap at ×3 to keep the frame rate up
+  const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  return Math.max(2, Math.min(touch ? 3 : 4, Math.floor(fit)));
 }
 export const ZOOM = pickZoom();
 export const GAME_W = VIEW_W * ZOOM; // 1920

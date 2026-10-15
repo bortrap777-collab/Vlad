@@ -45,6 +45,7 @@ async function boot(page, bot, saves = {}) {
   await bot.sleep(400);
 }
 
+const UI_PAUSE_X = 960 / 2 - 60;
 const results = [];
 async function scenario(name, fn, viewport) {
   const { browser, page, errors } = await launch(chromium, viewport);
@@ -198,6 +199,62 @@ await scenario('cutscene skip with Esc', async (page, bot) => {
   const e = await bot.idle();
   bot.assert(e.state.stage === 'leave_home', 'intro completes after skipping');
 });
+
+await scenario('phone: on-screen buttons only (no keyboard)', async (page, bot) => {
+  await page.goto(`${BASE}/`);
+  await page.evaluate((save) => {
+    localStorage.clear();
+    localStorage.setItem('kolya.save.auto', JSON.stringify(save));
+  }, yardSave({ x: 600, stage: 'help_dog' }));
+  await page.reload();
+  await page.waitForFunction(() => window.__KOLYA_GAME__?.scene?.isActive('Title'), null, { timeout: 60000 });
+  await bot.sleep(700);
+  const box = await page.evaluate(() => {
+    const r = document.querySelector('canvas').getBoundingClientRect();
+    return { x: r.left, y: r.top, k: r.width / 960 };
+  });
+  const ui = (x, y) => [box.x + x * box.k, box.y + y * box.k];
+  await page.touchscreen.tap(420, 200); // «Коснитесь экрана»
+  await bot.sleep(400);
+  await page.touchscreen.tap(...ui(150, 262 + 36)); // «Продолжить»
+  await bot.waitFor('yard', (s) => s.world?.level === 'courtyard' && !s.world.busy, 60000);
+  bot.assert(await page.evaluate(() => !document.querySelector('.tc').hidden), 'touch buttons are shown');
+  await bot.screenshot('phone_yard');
+  const hold = async (k, ms) => {
+    const b = page.locator(`.tc button[data-k="${k}"]`);
+    await b.dispatchEvent('pointerdown', { pointerId: 1 });
+    await bot.sleep(ms);
+    await b.dispatchEvent('pointerup', { pointerId: 1 });
+  };
+  const x0 = (await bot.snap()).world.px;
+  await hold('left', 900);
+  const x1 = (await bot.snap()).world.px;
+  bot.assert(x1 < x0 - 10, `◀ walks left (${Math.round(x0)} → ${Math.round(x1)})`);
+  // walk to the notice board and use the «Действие» button
+  for (let i = 0; i < 80; i++) {
+    const s = await bot.snap();
+    if (s.world.prompt?.key === 'board') break;
+    await hold(s.world.px > 222 ? 'left' : 'right', 120);
+  }
+  await page.locator('.tc button[data-k="interact"]').tap();
+  await bot.waitFor('board dialogue', (s) => !!s.ui.dialogue, 10000);
+  bot.assert(await page.evaluate(() => document.querySelector('.tc button[data-k="left"]').hidden), 'movement buttons hide during dialogue');
+  await bot.screenshot('phone_dialogue');
+  for (let i = 0; i < 10 && (await bot.snap()).ui.dialogue; i++) {
+    await page.touchscreen.tap(...ui(480, 130)); // tap the dialogue box
+    await bot.sleep(300);
+  }
+  bot.assert((await bot.snap()).state.flags.saw_poster === true, 'dialogue finished by tapping the box');
+  await page.locator('.tc button[data-k="journal"]').tap();
+  await bot.waitFor('journal', (s) => !!s.ui.journal);
+  await page.touchscreen.tap(...ui(880, 70)); // ✕
+  await bot.waitFor('journal closed', (s) => !s.ui.journal);
+  await page.locator('.tc button[data-k="pause"]').tap();
+  await bot.waitFor('paused', (s) => s.ui.paused);
+  await page.touchscreen.tap(...ui(UI_PAUSE_X, 188)); // «Продолжить»
+  await bot.waitFor('resumed', (s) => !s.ui.paused);
+  bot.assert(true, 'journal and pause work by touch');
+}, { width: 844, height: 390, mobile: true });
 
 for (const [w, h] of [[800, 450], [1920, 1080], [1280, 1024], [1024, 768]]) {
   await scenario(`viewport ${w}×${h}`, async (page, bot) => {

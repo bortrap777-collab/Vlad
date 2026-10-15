@@ -72,12 +72,34 @@ for (const spec of CAST) {
   img('dog', grid(frames, 16));
 }
 
+/** Keep only the warm lit windows/lamps of a layer, with a 1-px bloom — added on top at night so windows glow. */
+function warmLights(src: PixelCanvas): PixelCanvas {
+  const out = new PixelCanvas(src.w, src.h);
+  for (let y = 0; y < src.h; y++)
+    for (let x = 0; x < src.w; x++) {
+      if (!src.alphaAt(x, y)) continue;
+      const c = src.get(x, y);
+      const r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+      if (r > 190 && g > 110 && b < 150 && r - b > 90) {
+        out.set(x, y, c);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (!out.alphaAt(x + dx, y + dy)) out.set(x + dx, y + dy, c, 0.35);
+      }
+    }
+  return out;
+}
+
 // environment
 img('sky', E.drawSky());
 img('far', E.drawFarCity());
-img('mid', E.drawMidCity());
-img('courtyard', E.drawCourtyard());
-img('apartment', I.drawApartment());
+const mid = E.drawMidCity();
+img('mid', mid);
+img('mid_glow', warmLights(mid));
+const yard = E.drawCourtyard();
+img('courtyard', yard);
+img('courtyard_glow', warmLights(yard));
+const apt = I.drawApartment();
+img('apartment_glow', warmLights(apt));
+img('apartment', apt);
 img('lamp', E.drawLamp());
 img('bench', E.drawBench());
 img('slide', E.drawSlide());
@@ -93,6 +115,14 @@ img('boxes', I.drawBoxes());
 img('bread', I.drawBread());
 img('key', I.drawKey());
 img('can', X.drawCan());
+img('kiosk', E.drawKiosk());
+img('phonebooth', E.drawPhoneBooth());
+img('snowman', E.drawSnowman());
+img('sled', E.drawSled());
+img('cone', E.drawCone());
+img('vignette', E.drawVignette());
+img('grade_warm', E.drawWarmGrade());
+img('beam', E.drawWindowBeam());
 img('glow_warm', E.drawGlow(48, 0xffc070));
 img('glow_small', E.drawGlow(16, 0xffd890));
 img('glow_cold', E.drawGlow(40, 0xa0c0ff));
@@ -151,8 +181,9 @@ const wavDir = `${tmpdir()}/kolya-audio`;
 rmSync(wavDir, { recursive: true, force: true });
 mkdirSync(wavDir, { recursive: true });
 renderAudio(wavDir);
-rmSync(`${OUT}/audio`, { recursive: true, force: true });
+// remove stale files individually (keeping the folder avoids confusing a running dev server)
 mkdirSync(`${OUT}/audio`, { recursive: true });
+for (const f of readdirSync(`${OUT}/audio`)) rmSync(`${OUT}/audio/${f}`);
 let formats: string[] = ['ogg', 'mp3'];
 try {
   for (const f of readdirSync(wavDir)) {

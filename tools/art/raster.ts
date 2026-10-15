@@ -276,3 +276,25 @@ export function darken(c: RGB, k: number): RGB {
 export function lighten(c: RGB, k: number): RGB {
   return mix(c, 0xffffff, k);
 }
+
+/** Smooth value noise in [0,1) (bilinear, smoothstep) — organic shapes instead of blocky hash cells. */
+export function vnoise(x: number, y: number, scale: number, seed = 0): number {
+  const fx = x / scale, fy = y / scale;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const tx = fx - x0, ty = fy - y0;
+  const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+  const a = hash(x0, y0, seed), b = hash(x0 + 1, y0, seed), c = hash(x0, y0 + 1, seed), d = hash(x0 + 1, y0 + 1, seed);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+
+/** Fractal (multi-octave) value noise in [0,1). */
+export function fbm(x: number, y: number, scale: number, seed = 0, octaves = 3): number {
+  let sum = 0, amp = 1, norm = 0, s = scale;
+  for (let o = 0; o < octaves; o++) {
+    sum += vnoise(x, y, s, seed + o * 17) * amp;
+    norm += amp;
+    amp *= 0.5;
+    s /= 2;
+  }
+  return sum / norm;
+}

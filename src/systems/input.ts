@@ -7,6 +7,9 @@ import type { Action, Settings } from '../core/settings';
 export class InputMap {
   private down = new Set<string>();
   private pressed = new Set<string>();
+  /** On-screen (touch) buttons feed actions directly, independent of key bindings. */
+  private vDown = new Set<Action>();
+  private vPressed = new Set<Action>();
   /** When set, the next keydown is delivered here instead (key rebinding UI). */
   captureNext: ((code: string) => void) | null = null;
   private listeners: ((code: string) => void)[] = [];
@@ -39,18 +42,33 @@ export class InputMap {
   }
 
   isDown(a: Action): boolean {
-    return this.settings.keys[a].some((k) => this.down.has(k));
+    return this.vDown.has(a) || this.settings.keys[a].some((k) => this.down.has(k));
   }
 
   /** True once per physical press; consumes the press. */
   justPressed(a: Action): boolean {
+    if (this.vPressed.delete(a)) return true;
     const hit = this.settings.keys[a].find((k) => this.pressed.has(k));
     if (hit) this.pressed.delete(hit);
     return !!hit;
   }
 
   peekPressed(a: Action): boolean {
-    return this.settings.keys[a].some((k) => this.pressed.has(k));
+    return this.vPressed.has(a) || this.settings.keys[a].some((k) => this.pressed.has(k));
+  }
+
+  /** Touch button pressed / released. */
+  virtual(a: Action, down: boolean) {
+    if (down) {
+      if (!this.vDown.has(a)) this.vPressed.add(a);
+      this.vDown.add(a);
+      for (const l of this.listeners) l('Touch');
+    } else this.vDown.delete(a);
+  }
+
+  /** A one-shot tap (e.g. touching the interaction prompt). */
+  tap(a: Action) {
+    this.vPressed.add(a);
   }
 
   codePressed(code: string): boolean {
@@ -64,10 +82,13 @@ export class InputMap {
   /** Clear unconsumed presses (call at the end of each frame). */
   endFrame() {
     this.pressed.clear();
+    this.vPressed.clear();
   }
 
   reset() {
     this.down.clear();
     this.pressed.clear();
+    this.vDown.clear();
+    this.vPressed.clear();
   }
 }

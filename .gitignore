@@ -5,3 +5,4 @@ dist/
 test-results/
 .scratch/
 release/
+dist-single/

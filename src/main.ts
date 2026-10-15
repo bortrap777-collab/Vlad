@@ -1,8 +1,13 @@
 import Phaser from 'phaser';
-import '@fontsource/pt-sans/400.css';
-import '@fontsource/pt-sans/700.css';
-import '@fontsource/pt-sans/400-italic.css';
-import '@fontsource/tiny5/400.css';
+// only the Cyrillic + Latin subsets are needed
+import '@fontsource/pt-sans/cyrillic-400.css';
+import '@fontsource/pt-sans/latin-400.css';
+import '@fontsource/pt-sans/cyrillic-700.css';
+import '@fontsource/pt-sans/latin-700.css';
+import '@fontsource/pt-sans/cyrillic-400-italic.css';
+import '@fontsource/pt-sans/latin-400-italic.css';
+import '@fontsource/tiny5/cyrillic-400.css';
+import '@fontsource/tiny5/latin-400.css';
 import { GAME_W, GAME_H } from './config';
 import { BootScene } from './scenes/BootScene';
 import { TitleScene } from './scenes/TitleScene';
@@ -26,7 +31,7 @@ async function start() {
   } catch {
     /* fall back to system fonts */
   }
-  services();
+  services().initTouch();
   const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game',

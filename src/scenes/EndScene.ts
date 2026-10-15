@@ -13,6 +13,7 @@ export class EndScene extends Phaser.Scene {
   create() {
     const sv = services();
     sv.audio.attach(this);
+    sv.touch?.setContext('hidden');
     this.cameras.main.setOrigin(0, 0).setZoom(UI_ZOOM);
     this.cameras.main.fadeIn(1200, 7, 9, 19);
     sv.audio.playMusic('music_mystery', 1500);

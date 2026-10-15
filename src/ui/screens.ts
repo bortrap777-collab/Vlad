@@ -96,7 +96,7 @@ const SPEEDS: TextSpeed[] = ['slow', 'normal', 'fast', 'instant'];
 
 export function settingsScreen(scene: Phaser.Scene, stack: ScreenStack, depth = 0): Screen {
   const sv = services();
-  const c = frame(scene, 'Настройки', 640, 460, depth);
+  const c = frame(scene, 'Настройки', 640, 490, depth);
   const step = (k: 'master' | 'music' | 'sfx') => (d: -1 | 1) => sv.updateSettings((s) => (s[k] = Math.round(Math.max(0, Math.min(1, s[k] + d * 0.1)) * 10) / 10));
   const onOff = (v: boolean) => (v ? 'включено' : 'выключено');
   const items: MenuItem[] = [
@@ -112,10 +112,16 @@ export function settingsScreen(scene: Phaser.Scene, stack: ScreenStack, depth = 
     },
     { label: 'Субтитры звуков', value: () => onOff(sv.settings.captions), onSelect: () => sv.updateSettings((s) => (s.captions = !s.captions)), hint: 'Подписи вроде «[Скулит собака]».' },
     { label: 'Меньше движения', value: () => onOff(sv.settings.reducedMotion), onSelect: () => sv.updateSettings((s) => (s.reducedMotion = !s.reducedMotion)), hint: 'Без тряски камеры, меньше снегопада и вспышек.' },
+    {
+      label: 'Кнопки на экране',
+      value: () => ({ auto: 'авто', on: 'включены', off: 'выключены' })[sv.settings.touch],
+      onSelect: () => sv.updateSettings((s) => (s.touch = s.touch === 'auto' ? 'on' : s.touch === 'on' ? 'off' : 'auto')),
+      hint: 'Для телефона и планшета. «Авто» — только на сенсорных экранах.',
+    },
     { label: 'Полный экран', value: () => onOff(scene.scale.isFullscreen), onSelect: () => (scene.scale.isFullscreen ? scene.scale.stopFullscreen() : scene.scale.startFullscreen()) },
     { label: 'Назад', onSelect: () => stack.pop() },
   ];
-  const menu = new Menu(scene, UI_W / 2 - 250, 128, items, { size: 20, gap: 36, hintY: 450, valueX: 270 });
+  const menu = new Menu(scene, UI_W / 2 - 250, 104, items, { size: 20, gap: 34, hintY: 460, valueX: 270 });
   c.add(menu.container);
   return { container: c, menu };
 }

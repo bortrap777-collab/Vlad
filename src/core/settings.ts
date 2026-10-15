@@ -13,8 +13,12 @@ export interface Settings {
   textSpeed: TextSpeed;
   captions: boolean;
   reducedMotion: boolean;
+  /** On-screen buttons: auto = only on touch screens. */
+  touch: TouchMode;
   keys: Record<Action, string[]>;
 }
+
+export type TouchMode = 'auto' | 'on' | 'off';
 
 export const DEFAULT_KEYS: Record<Action, string[]> = {
   left: ['KeyA', 'ArrowLeft'],
@@ -37,6 +41,7 @@ export function defaultSettings(): Settings {
     textSpeed: 'normal',
     captions: true,
     reducedMotion: reduce,
+    touch: 'auto',
     keys: JSON.parse(JSON.stringify(DEFAULT_KEYS)),
   };
 }
@@ -66,6 +71,7 @@ export function loadSettings(): Settings {
       textSpeed: p.textSpeed && p.textSpeed in TEXT_CPS ? p.textSpeed : d.textSpeed,
       captions: typeof p.captions === 'boolean' ? p.captions : d.captions,
       reducedMotion: typeof p.reducedMotion === 'boolean' ? p.reducedMotion : d.reducedMotion,
+      touch: p.touch === 'on' || p.touch === 'off' || p.touch === 'auto' ? p.touch : d.touch,
       keys,
     };
   } catch {

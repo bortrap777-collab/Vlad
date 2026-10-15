@@ -32,9 +32,12 @@ export class Journal {
       this.tabTexts.push(tt);
       this.container.add(tt);
     });
-    const close = txt(scene, X + W - 20, Y + 22, '✕', 20, COLORS.textDim, {}, true).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    const close = txt(scene, X + W - 20, Y + 22, '✕', 20, COLORS.textDim, { padding: { x: 12, y: 8 } }, true).setOrigin(1, 0).setInteractive({ useHandCursor: true });
     close.on('pointerdown', () => this.onClose());
-    this.container.add(close);
+    // generous invisible hit area for fingers
+    const closeHit = scene.add.rectangle(X + W - 4, Y + 4, 84, 64, 0, 0).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+    closeHit.on('pointerdown', () => this.onClose());
+    this.container.add([closeHit, close]);
     this.content = scene.add.container(0, 0);
     this.container.add(this.content);
   }
@@ -91,7 +94,7 @@ export class Journal {
       const done = STAGES.slice(1, stageIndex(st.stage));
       const list = done.length ? done.map((d) => `✓  ${d.objective}`).join('\n') : 'Пока ничего. Всё впереди.';
       this.content.add(txt(s, X + 30, Y + 220, list, 17, '#8f9ac0', { lineSpacing: 6, wordWrap: { width: W - 60 } }));
-      footer(`A/D — вкладки · ${keyLabel(keys.journal[0])} или Esc — закрыть`);
+      footer(services().isTouch ? 'Вкладки — сверху, закрыть — крестик справа.' : `A/D — вкладки · ${keyLabel(keys.journal[0])} или Esc — закрыть`);
       return;
     }
 
@@ -99,7 +102,7 @@ export class Journal {
       const clues = this.clues();
       if (!clues.length) {
         this.content.add(txt(s, X + 30, Y + 90, 'Улик пока нет. Смотри по сторонам и расспрашивай людей.', 18, COLORS.textDim));
-        footer('A/D — вкладки · Esc — закрыть');
+        footer(services().isTouch ? 'Вкладки — сверху, закрыть — крестик справа.' : 'A/D — вкладки · Esc — закрыть');
         return;
       }
       this.sel = Math.min(this.sel, clues.length - 1);
@@ -127,7 +130,7 @@ export class Journal {
       btn.on('pointerdown', () => this.combine());
       this.content.add(btn);
       if (this.message) this.content.add(txt(s, px, Y + 372, this.message, 17, this.messageColor, { wordWrap: { width: W - (px - X) - 50 } }));
-      footer(`W/S — выбрать · Enter — отметить улику · C — сопоставить две отмеченные · Esc — закрыть`);
+      footer(services().isTouch ? 'Нажмите на улику, затем ещё раз — чтобы отметить. Отметьте две и нажмите «Сопоставить».' : `W/S — выбрать · Enter — отметить улику · C — сопоставить две отмеченные · Esc — закрыть`);
       return;
     }
 
@@ -154,7 +157,7 @@ export class Journal {
     this.content.add(s.add.image(px + 24, Y + 110, 'items', it.icon).setScale(4));
     this.content.add(txt(s, px + 64, Y + 96, it.name, 21, COLORS.accentText, {}, true));
     this.content.add(txt(s, px, Y + 150, it.description, 18, COLORS.text, { wordWrap: { width: W - (px - X) - 50 }, lineSpacing: 4 }));
-    footer('W/S — выбрать · A/D — вкладки · Esc — закрыть');
+    footer(services().isTouch ? 'Нажмите на вещь, чтобы рассмотреть её.' : 'W/S — выбрать · A/D — вкладки · Esc — закрыть');
   }
 
   private toggleMark() {

@@ -105,7 +105,7 @@ export class DialogueBox {
       this.namePlate.fillStyle(0x1b2340, 1).fillRect(BOX_X + 18, BOX_Y - 26, w - 4, 24);
     } else this.nameText.setVisible(false);
     const k = services().settings.keys;
-    this.hint.setText(`${keyLabel(k.interact[0])} — дальше · ${keyLabel(k.history[0])} — история`);
+    this.hint.setText(services().isTouch ? 'Нажмите на окно — дальше' : `${keyLabel(k.interact[0])} — дальше · ${keyLabel(k.history[0])} — история`);
     if (a.skip && !a.choices.length) {
       this.shown = this.full.length;
       this.body.setText(this.full);

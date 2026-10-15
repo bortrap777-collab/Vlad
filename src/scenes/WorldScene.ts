@@ -46,13 +46,15 @@ export class WorldScene extends Phaser.Scene {
   private footprints: Phaser.GameObjects.Image[] = [];
   private breathTimers = new Map<Actor, number>();
   private puffs!: Phaser.GameObjects.Particles.ParticleEmitter;
-  private nightOverlay!: Phaser.GameObjects.Rectangle;
+  private night = false;
+  private nightColor = 0x5866a8;
   private nightLights: Phaser.GameObjects.Image[] = [];
   private headlights: Phaser.GameObjects.Image[] = [];
   private dogScareCd = 0;
   private unsub: (() => void)[] = [];
   private swingSeats: Phaser.GameObjects.Image[] = [];
   private fightAssist = 0;
+  private warmGrade: Phaser.GameObjects.Image | null = null;
 
   constructor() {
     super('World');
@@ -74,6 +76,7 @@ export class WorldScene extends Phaser.Scene {
     this.nightLights = [];
     this.headlights = [];
     this.swingSeats = [];
+    this.warmGrade = null;
     this.breathTimers = new Map();
     this.busy = false;
     this.cutscene = false;
@@ -99,6 +102,11 @@ export class WorldScene extends Phaser.Scene {
       this.add.image(offX * (1 - p.factor), offY * (1 - p.factor), p.key).setOrigin(0).setScrollFactor(p.factor).setDepth(-100 + i);
     });
     this.add.image(0, 0, L.backdrop).setOrigin(0).setDepth(0);
+    // lit windows re-added above the night overlay so they keep glowing in the dark
+    for (const p of L.parallax)
+      if (this.textures.exists(`${p.key}_glow`))
+        this.nightLights.push(this.add.image(offX * (1 - p.factor), offY * (1 - p.factor), `${p.key}_glow`).setOrigin(0).setScrollFactor(p.factor).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.75).setDepth(-100 + L.parallax.indexOf(p) + 0.5));
+    if (this.textures.exists(`${L.backdrop}_glow`)) this.nightLights.push(this.add.image(0, 0, `${L.backdrop}_glow`).setOrigin(0).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.8).setDepth(0.5));
 
     // ---- props
     for (const pr of L.props) {
@@ -120,11 +128,15 @@ export class WorldScene extends Phaser.Scene {
     }
 
     // ---- night overlay (multiply) — lights are drawn above it
-    this.nightOverlay = this.add.rectangle(0, 0, L.width, VIEW_H, L.outdoor ? 0x5866a8 : 0x6a76b0).setOrigin(0).setDepth(90).setBlendMode(Phaser.BlendModes.MULTIPLY).setVisible(false);
+    // night = a multiplicative tint on every scene sprite (lights and lit windows stay untinted)
+    this.nightColor = L.outdoor ? 0x5866a8 : 0x6a76b0;
     this.applyNight(!!st.flags.night);
 
     // ---- atmosphere
     if (L.outdoor) this.createSnow();
+    // screen-space grading: warm dusk bloom from the lower right (outdoors) and a soft vignette
+    if (L.outdoor) this.warmGrade = this.add.image(offX, offY, 'grade_warm').setOrigin(0).setScrollFactor(0).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.55).setDepth(96).setVisible(!st.flags.night);
+    this.add.image(offX, offY, 'vignette').setOrigin(0).setScrollFactor(0).setDepth(98);
     this.puffs = this.add.particles(0, 0, 'puff', {
       emitting: false,
       lifespan: 1500,
@@ -134,6 +146,9 @@ export class WorldScene extends Phaser.Scene {
       alpha: { start: 0.55, end: 0 },
     });
     this.puffs.setDepth(60);
+    // steam from the kettle on the stove
+    if (L.id === 'apartment' && !services().settings.reducedMotion)
+      this.time.addEvent({ delay: 700, loop: true, callback: () => this.puffs.emitParticleAt(190 + Math.random() * 2, 160, 1) });
 
     // ---- characters
     this.player = new Actor(this, 'kolya', st.x, 50);
@@ -177,6 +192,10 @@ export class WorldScene extends Phaser.Scene {
   private addLampLights(x: number, bottom: number, front: boolean) {
     const head = this.add.image(x + 7, bottom - 97, 'glow_warm').setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.7).setScale(0.9).setDepth(95);
     const pool = this.add.image(x + 4, front ? GROUND_Y + 14 : GROUND_Y - 4, 'glow_warm').setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.32).setScale(1.7, 0.35).setDepth(95);
+    // dithered light cone from the lamp head down to the ground
+    const headY = bottom - 95;
+    const groundY = front ? GROUND_Y + 12 : GROUND_Y;
+    this.add.image(x + 7, headY, 'cone').setOrigin(0.5, 0).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.42).setScale(1, (groundY - headY) / 104).setDepth(94);
     if (!services().settings.reducedMotion) this.tweens.add({ targets: head, alpha: 0.6, duration: 1800 + Math.random() * 800, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
     void pool;
   }
@@ -214,7 +233,14 @@ export class WorldScene extends Phaser.Scene {
   }
 
   applyNight(on: boolean) {
-    this.nightOverlay.setVisible(on);
+    this.night = on;
+    for (const o of this.children.list) {
+      if (!(o instanceof Phaser.GameObjects.Image || o instanceof Phaser.GameObjects.Sprite)) continue;
+      if (o.blendMode === Phaser.BlendModes.ADD || o.scrollFactorX === 0 && o.texture.key === 'vignette') continue;
+      if (on) o.setTint(this.nightColor);
+      else o.clearTint();
+    }
+    this.warmGrade?.setVisible(!on);
     this.nightLights.forEach((l) => l.setVisible(on));
   }
 
@@ -305,6 +331,10 @@ export class WorldScene extends Phaser.Scene {
     }
     if (this.busy || this.ui?.modal || this.fight) this.setPrompt(null);
 
+    if (this.night) {
+      for (const a of [this.player, ...this.npcs.values(), ...this.scripted.values()]) if (a.sprite.tintTopLeft !== this.nightColor) a.sprite.setTint(this.nightColor);
+      if (this.dog && this.dog.sprite.tintTopLeft !== this.nightColor) this.dog.sprite.setTint(this.nightColor);
+    }
     this.player.update();
     this.npcs.forEach((a) => a.update());
     this.scripted.forEach((a) => a.update());
@@ -336,6 +366,7 @@ export class WorldScene extends Phaser.Scene {
       const px = this.textures.getPixel(fx, fy, this.level.backdrop);
       if (px && px.v > 0.45) {
         const fp = this.add.image(fx, fy, 'footprint').setDepth(5).setAlpha(0.75).setFlipX(this.player.facing < 0);
+        if (this.night) fp.setTint(this.nightColor);
         this.footprints.push(fp);
         this.tweens.add({ targets: fp, alpha: 0, delay: 14000, duration: 8000, onComplete: () => fp.destroy() });
         if (this.footprints.length > 70) this.footprints.shift()?.destroy();
@@ -958,7 +989,7 @@ export class WorldScene extends Phaser.Scene {
           dog: self.dog ? { x: self.dog.x, mode: self.dog.mode } : null,
           fight: self.fight ? self.fight.view() : null,
           music: services().audio.currentMusic,
-          night: self.nightOverlay?.visible ?? false,
+          night: self.night,
         };
       },
       get ui() {

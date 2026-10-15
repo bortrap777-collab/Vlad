@@ -119,9 +119,9 @@ export function makeBot(page, { out = 'test-results', log = console.log } = {}) 
   return { snap, sleep, waitFor, press, screenshot, walkTo, talkThrough, choose, interact, idle, assert };
 }
 
-export async function launch(chromium, { width = 1280, height = 720 } = {}) {
+export async function launch(chromium, { width = 1280, height = 720, mobile = false } = {}) {
   const browser = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader'] });
-  const page = await browser.newPage({ viewport: { width, height } });
+  const page = await browser.newPage(mobile ? { viewport: { width, height }, deviceScaleFactor: 2, isMobile: true, hasTouch: true } : { viewport: { width, height } });
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => {

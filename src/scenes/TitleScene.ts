@@ -81,7 +81,8 @@ export class TitleScene extends Phaser.Scene {
     txt(this, UI_W - 16, UI_H - 12, 'Зима, 1996', 14, COLORS.textDim, {}, true).setOrigin(1, 1).setDepth(10);
 
     // First interaction unlocks browser audio, then shows the menu.
-    const press = txt(this, 78, 300, 'Нажмите любую клавишу', 22, COLORS.accentText, {}, true).setDepth(10);
+    sv.touch?.setContext('hidden');
+    const press = txt(this, 78, 300, sv.isTouch ? 'Коснитесь экрана' : 'Нажмите любую клавишу', 22, COLORS.accentText, {}, true).setDepth(10);
     this.tweens.add({ targets: press, alpha: 0.35, duration: 900, yoyo: true, repeat: -1 });
     const go = () => {
       if (this.ready) return;
