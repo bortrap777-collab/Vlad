@@ -7,5 +7,14 @@ export default defineConfig({
   base: './',
   publicDir: false,
   plugins: [viteSingleFile()],
-  build: { outDir: 'dist-single', target: 'es2020', assetsInlineLimit: 100_000_000, cssCodeSplit: false, chunkSizeWarningLimit: 4000 },
+  build: {
+    outDir: 'dist-single',
+    target: 'es2018',
+    assetsInlineLimit: 100_000_000,
+    cssCodeSplit: false,
+    chunkSizeWarningLimit: 4000,
+    modulePreload: false,
+    // a classic (non-module) script runs in more phone browsers and in-app viewers
+    rollupOptions: { output: { format: 'iife', inlineDynamicImports: true } },
+  },
 });

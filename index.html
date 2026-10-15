@@ -19,13 +19,14 @@
         color: #9aa6c8; font: 16px "PT Sans", system-ui, sans-serif; letter-spacing: .04em; gap: 12px; pointer-events: none;
       }
       #boot.hidden { display: none; }
+      #boot small { display: block; max-width: 30em; padding: 0 16px; color: #6b7699; font-size: 13px; line-height: 1.45; text-align: center; letter-spacing: 0; }
       #boot .err { color: #f08a8a; max-width: 520px; text-align: center; pointer-events: auto; }
       noscript { color: #eef1fb; font: 18px system-ui; position: fixed; inset: 0; display: grid; place-items: center; }
     </style>
   </head>
   <body>
     <div id="game"></div>
-    <div id="boot">Загрузка…</div>
+    <div id="boot">Загрузка игры…<small>Если эта надпись не пропадает дольше минуты, значит, файл открылся в просмотрщике, который не запускает игры. Откройте его в браузере: на Android — «Открыть с помощью» → Chrome.</small></div>
     <noscript>Для игры нужен включённый JavaScript.</noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>

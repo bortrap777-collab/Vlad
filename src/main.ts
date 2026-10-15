@@ -47,10 +47,15 @@ async function start() {
   });
   // Clear one-shot key presses after *all* scenes have updated (Phaser updates scenes top-down).
   game.events.on(Phaser.Core.Events.POST_STEP, () => services().input.endFrame());
+  started = true;
   bootEl.classList.add('hidden');
   (window as unknown as { __KOLYA_GAME__: Phaser.Game }).__KOLYA_GAME__ = game;
   if (import.meta.env.DEV) (window as unknown as { __KOLYA_SV__: unknown }).__KOLYA_SV__ = services();
 }
 
-window.addEventListener('error', (e) => console.error('[kolya] uncaught', e.message));
+let started = false;
+window.addEventListener('error', (e) => {
+  console.error('[kolya] uncaught', e.message);
+  if (!started) fail(String(e.message));
+});
 start().catch((e) => fail(String(e?.message ?? e)));
