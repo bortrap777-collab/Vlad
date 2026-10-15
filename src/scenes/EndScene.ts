@@ -25,7 +25,7 @@ export class EndScene extends Phaser.Scene {
     const lines = chapterSummary(st);
     txt(this, 90, 118, lines.map((l) => '•  ' + l).join('\n'), 17, COLORS.text, { lineSpacing: 7, wordWrap: { width: UI_W - 180 } });
     txt(this, 90, 418, 'Продолжение следует…', 20, COLORS.accentText, {}, true);
-    txt(this, 90, 446, NEXT_CHAPTERS.join('\n'), 14, COLORS.textDim, { lineSpacing: 3 });
+    txt(this, 90, 446, NEXT_CHAPTERS.join('\n'), 13, COLORS.textDim, { lineSpacing: 2, wordWrap: { width: 600 } });
     this.menu = new Menu(this, UI_W - 90, UI_H - 40, [{ label: 'В главное меню', onSelect: () => this.scene.start('Title') }], { size: 22 });
     this.menu.container.x -= 200;
     this.menu.refresh();

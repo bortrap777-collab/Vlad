@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tools tests",
     "test": "vitest run",
-    "test:e2e": "node tests/e2e/playthrough.mjs"
+    "test:e2e": "node tests/e2e/playthrough.mjs",
+    "test:scenarios": "node tests/e2e/scenarios.mjs",
+    "release": "node tools/make-release.mjs"
   },
   "dependencies": {
     "@fontsource/pt-sans": "^5.3.0",
@@ -30,5 +32,7 @@
     "typescript-eslint": "^8.71.2",
     "vite": "^7.3.7",
     "vitest": "^3.2.7"
-  }
+  },
+  "description": "«Коля: Маленький хулиган» — сюжетная пиксельная игра (глава 1).",
+  "license": "SEE LICENSE IN ASSETS.md"
 }

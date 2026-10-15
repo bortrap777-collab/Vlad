@@ -283,6 +283,7 @@ export class UIScene extends Phaser.Scene {
     session.dispatch(runner.takeEvents());
     this.dialogueActive = true;
     this.setPrompt(null);
+    this.tracker.setVisible(false);
     this.dialogue.onTyping = (typing) => this.world?.onSpeaker(runner.current?.node.speaker ?? null, typing);
     try {
       while (!runner.done) {
@@ -311,6 +312,7 @@ export class UIScene extends Phaser.Scene {
     } finally {
       this.dialogue.hide();
       this.dialogueActive = false;
+      this.tracker.setVisible(!this.cutsceneOn && !this.fight);
       this.world?.onSpeaker(null, false);
     }
   }
@@ -501,9 +503,15 @@ export class UIScene extends Phaser.Scene {
     if (this.tracker && !this.cutsceneOn) this.tracker.setVisible(true);
   }
 
+  private fightHudKey = '';
+
   private drawFightHud() {
     if (!this.fight || !this.fightHud) return;
     const v = this.fight.view();
+    // redraw only when a number changes
+    const key = `${v.hp}|${v.enemies.map((e) => e.resolve).join(',')}`;
+    if (key === this.fightHudKey && this.fightHud.length) return;
+    this.fightHudKey = key;
     this.fightHud.removeAll(true);
     const g = this.add.graphics();
     this.fightHud.add(g);

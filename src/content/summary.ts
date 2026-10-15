@@ -1,5 +1,6 @@
 /** End-of-chapter recap lines, chosen from the player's recorded choices and flags. */
 import type { GameState } from '../core/state';
+import { CHAPTERS } from './chapters';
 
 export function chapterSummary(s: GameState): string[] {
   const c = (t: string) => s.choices.includes(t);
@@ -21,8 +22,5 @@ export function chapterSummary(s: GameState): string[] {
   return out;
 }
 
-export const NEXT_CHAPTERS = [
-  'Глава 2. «Семнадцатый гараж» — Лёха, фонарик и то, что прячут за ржавыми воротами.',
-  'Глава 3. «Подвал» — школа, подъезды и дядя Саша, который знает больше, чем говорит.',
-  'Глава 4. «Свои» — когда взрослые не верят, дети держатся вместе.',
-];
+const lead = (s: string) => s.split('. ')[0].replace(/^./, (ch) => ch.toLowerCase());
+export const NEXT_CHAPTERS = CHAPTERS.filter((c) => c.status === 'planned').map((c) => `Глава ${c.id}. «${c.title}» — ${lead(c.synopsis)}.`);

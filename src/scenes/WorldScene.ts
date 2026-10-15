@@ -443,6 +443,15 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private async talkTo(a: Actor, dialogue: string) {
+    // keep a comfortable conversation distance so the sprites don't overlap
+    const gap = this.player.x - a.x;
+    if (Math.abs(gap) < 24) {
+      const side = gap >= 0 ? 1 : -1;
+      const target = Phaser.Math.Clamp(a.x + side * 26, this.level.bounds[0], this.level.bounds[1]);
+      this.busy = true;
+      await this.player.walkTo(Math.abs(target - a.x) >= 20 ? target : a.x - side * 26, 70);
+      this.busy = false;
+    }
     a.faceTowards(this.player.x);
     this.player.faceTowards(a.x);
     await this.talk(dialogue);
