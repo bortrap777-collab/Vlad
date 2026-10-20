@@ -136,8 +136,8 @@ class Location:
         movers = np.zeros((self.H, self.W), bool)
         for e in self.effects:
             if getattr(e, 'plate', None) is not None:
-                movers |= e.plate
-        plate = inpaint(self.src, ndimage.binary_dilation(movers, iterations=self.U), iters=30) if movers.any() else self.src
+                movers |= e.plate if getattr(e, 'exact_plate', False) else ndimage.binary_dilation(e.plate, iterations=self.U)
+        plate = inpaint(self.src, movers, iters=30) if movers.any() else self.src
         g = self._prep(plate)
         lab = _assign(to_perc(g.reshape(-1, 3)), to_perc(self.pal)).reshape(self.H, self.W)
         if self.denoise:

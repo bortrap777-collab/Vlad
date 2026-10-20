@@ -114,6 +114,33 @@ style's motifs, because that's what the references are. Steps:
    colour, never pure black unless the reference uses it).
 4. Lights last: windows, lanterns, glow pools, reflections.
 
+**B+. An original scene from scratch, detailed** («нарисуй сам красивый пейзаж»).
+`examples/original_moon_lake/` is the worked piece (`draw.py` then `animate.py`): a
+mysterious moonlit lake with a gothic tower, drawn at 768x432 with design units ×2.
+What made it read as the user's style rather than "made by code" (each was a defect
+in an earlier pass):
+- Work at 2× the design grid (S=2). The 384×216 first pass looked flat; the user asked
+  «сделай более детально». Shapes stay in design units, texture lives at art px.
+- Shade rock from a fake height field (`crag()` in the example): light where the
+  surface tilts toward the moon, broad scale for far ranges (12–13), finer for
+  cliffs (7), lowest contrast far away. Small-scale noise reads as crumpled foil.
+- Cloud edges facing the moon are a lit BAND 2–8 px deep, brighter near the moon;
+  a 1-px lit line along a ragged edge reads as lightning. Remove 1–2 px filaments.
+  Clouds part around the moon with a ragged (noise) opening, never a circle.
+- Silhouette rule: the focal tower is near-black against the moon, with slate
+  scallops, stone courses, buttresses, lancet windows (pointed, 3-tone warm), ivy,
+  rims only where the halo is. One cold accent light (teal window) = mystery.
+- Reflections mirror about each object's own waterline, fade and break with
+  distance; the moon path is drawn after them and is wider than the tower.
+- Foreground is the darkest layer; things standing on it (a stone lantern) get a
+  lighter ramp and a rim, or they vanish into the cliff behind.
+- Story props make it a place: ruins with one lit window on a far peak, a boat with
+  a lamp, a dock and steps, lily pads with glowing flowers, glowing mushrooms.
+- Animating your own drawing: `Location(big.png, grid=2, unit=2, n_colors=230,
+  sharpen=0, denoise=False)`; mist only behind the foreground; the animated flame's
+  glow is small when the still already holds the light pool; a bobbing boat is
+  redrawn whole every frame (its plate is painted out).
+
 **C. Animation** (GIF + PNG frames)
 Draw the static base once, then make frames by changing only what moves — lantern
 flicker (glow strength), water/waterfall (shifting streak texture), smoke drift, banners,

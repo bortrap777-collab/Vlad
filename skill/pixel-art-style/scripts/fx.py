@@ -165,9 +165,14 @@ def lit_tints(pal, light, steps=(0.15, 0.3, 0.5), top=0.7, every=2):
 
 class Effect:
     """Positions and sizes passed to effects are in ART PIXELS, except Particles
-    (design units, see there). self.u = art px per design unit (set by Location)."""
+    (design units, see there). self.u = art px per design unit (set by Location).
+    exact_plate=True: the plate mask is painted out as is (moving objects: moss,
+    reeds, banners). Otherwise it is dilated (replaced things with soft halos:
+    flames, lamps) — dilating thin movers erased everything around them (a lantern's
+    cage vanished under its hanging moss)."""
     layer = 20
     plate = None
+    exact_plate = False
     u = 1
 
     def bind(self, loc):
@@ -666,7 +671,8 @@ class Sway(Effect):
         self.mask = mask; self.amp = amp; self.wavelength = wavelength; self.cycles = cycles
         self.root = root; self.piece = piece; self.seed = seed; self.min_px = min_px
         self.direction = direction; self.twos = twos
-        self.plate = ndimage.binary_dilation(mask)
+        self.plate = mask
+        self.exact_plate = True        # thin movers: paint out only their own pixels
 
     def bind(self, loc):
         self.loc = loc
@@ -719,7 +725,8 @@ class Swing(Effect):
     def __init__(self, mask, pivot_y, amp=1.5, cycles=1, phase=0.0, twos=True):
         self.mask = mask; self.pivot_y = pivot_y; self.amp = amp; self.cycles = cycles
         self.phase = phase; self.twos = twos
-        self.plate = ndimage.binary_dilation(mask)
+        self.plate = mask
+        self.exact_plate = True        # thin movers: paint out only their own pixels
 
     def draw(self, img, f, n):
         ff = (f // 2) * 2 if self.twos else f
@@ -743,7 +750,8 @@ class Banner(Effect):
     def __init__(self, mask, emblem=None, amp=2.0, cycles=1, n=6, top_fixed=3):
         self.mask = mask; self.emblem = emblem; self.amp = amp; self.cycles = cycles
         self.n = n; self.top_fixed = top_fixed
-        self.plate = ndimage.binary_dilation(mask)
+        self.plate = mask
+        self.exact_plate = True        # thin movers: paint out only their own pixels
 
     def bind(self, loc):
         from motion_objects import SheetY

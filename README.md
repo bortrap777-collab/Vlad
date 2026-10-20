@@ -13,6 +13,7 @@ seamlessly looping location (24 frames × 90 ms):
 | `castle` | banners in the wind, brazier, flickering windows, waterfalls, mist, moon |
 | `forest` | lanterns, fireflies, waterfall, rippling stream, mist, plants in the breeze |
 | `village` | chimney smoke, banner, trees and flowers in the wind, birds, butterflies |
+| `moon_lake` | **original, drawn from scratch**: moonlit lake, gothic tower, falls, mist, wisps, lantern, boat, bats |
 
 Per location: `<name>_x2.gif` (for viewing), `<name>.gif` (tile size),
 `<name>_sheet.png` (native frames as a spritesheet for Pixelorama), `<name>_still.png`.
