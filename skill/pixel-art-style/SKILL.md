@@ -32,6 +32,8 @@ Scripts live in `scripts/` next to this file:
 | `location.py` | **living location** (approach E): repaint once at the finest grid, effects redrawn per frame, one GIF-safe palette; writes GIF (ref size + ×2), native frames, Pixelorama spritesheet, still |
 | `fx.py` | the effects: `Liquid` (lava/pond, flow-map drift), `Fall` (water/lava falls), `Ripple`, `Flame` (sprite fire, candles to bonfires), `Lights` (windows, lanterns), `Particles` (ember, firefly, dust, drip, leaf, snow, bird, butterfly), `Smoke`, `Mist`, `Sway` (plants, crowns), `Swing` (cages, hanging lamps), `Banner`, `Breathe` (slow area light) |
 | `photo_to_pixel.py PHOTO OUT --width 320` | **photo → pixel art** (approach F): median smoothing at 2× grid, style grading, small k-means palette pulled toward the reference palette (`--style`), ordered dither only in smooth gradients, selective outline; `leaf_clumps()` turns photo bokeh foliage into lit leaf clusters |
+| `objects.py` | **detailing kit** (`Kit`): masonry courses, roof-tile rows, planks, cylinder / AO shading, round towers with corbels + cone roofs + finials, curtain walls with merlons and slits, framed lit windows (lancet / round, mullions, sills, spill), voussoir gates with portcullis, buttresses, ivy, banners, pennants |
+| `artifact_check.py ART OUT [--masks M --ground G --protect a,b] [--fix]` | finds salt (lone pixels), dust specks, jaggies, floating objects, rare colours; `clean()` removes them (Location cleans the animation base automatically) |
 | `zoom_grid.py REF x0 y0 x1 y1 OUT [k]` | enlarged crop of the reference with a coordinate grid — find boxes for masks |
 | `frame_strip.py FRAMES x0 y0 x1 y1 OUT [k] [frames…]` | the same crop from several frames stacked — judge motion by eye |
 
@@ -44,6 +46,15 @@ layer order and the parameter ranges that worked.
 
 Read `references/craft.md` before drawing a character or an animation; it holds the
 pixel-art craft rules (ramps, hue shifting, clusters, outlines, animation timing).
+
+**Detailing sub-skill — always on.** Read `references/lessons.md` (the running log
+of corrections) before every piece, and run the detailing pass from
+`references/detailing.md` on the focal subject and every large or close object:
+construct logically (supported, joined, back to front) → texture by construction
+(`objects.Kit`) → volume → 3–6 explaining details → light → `artifact_check.py` →
+crop review → append what you learned to `lessons.md`. This loop is how the work
+keeps getting better from piece to piece; skipping it is the main cause of
+"flat", "floating" or "noisy" feedback.
 
 ## Workflow
 

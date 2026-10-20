@@ -63,7 +63,7 @@ def merge_palette(cols, max_n=256, min_dist=5.0, keep_first=0):
 
 class Location:
     def __init__(self, ref, grid=1, unit=2, N=24, n_colors=170, grade_k=0.0, sharpen=None, seed=0,
-                 denoise=None):
+                 denoise=None, clean_base=True):
         """grid: screen px of the reference per art pixel. 1 = every reference pixel is
         an art pixel (finest; use it unless the reference really has bigger blocks —
         a 2x grid on a soft AI image reads as "bitten" edges).
@@ -75,6 +75,7 @@ class Location:
         self.U = self.u = unit
         sharpen = (0.0 if grid == 1 else 0.35) if sharpen is None else sharpen
         self.denoise = (grid >= 2) if denoise is None else denoise
+        self.clean_base = clean_base
         self.W, self.H = im.width // grid, im.height // grid
         self.src = load_native(ref, self.W, self.H)
         A = analyse(self.src)
@@ -123,6 +124,19 @@ class Location:
         if self.denoise:
             lab = mode_filter(lab, 1)
         self.ref_img = self.pal[lab]
+        if self.clean_base:                       # before effects copy objects from it
+            self.ref_img = self._clean(self.ref_img)
+
+    def _clean(self, img):
+        """Re-quantising to <=256 colours leaves lone pixels; remove salt/dust/jaggies
+        from the static base once. Stars and sparkles (a pixel much brighter than all
+        its neighbours) and light cores are protected."""
+        from artifact_check import clean, neighbours
+        lum = img @ np.array([0.30, 0.59, 0.11])
+        nbmax = np.max(np.stack([n[..., 0] for n in neighbours(lum[..., None])]), 0)
+        protect = (lum > nbmax + 30) | (lum > 200)
+        protect = ndimage.binary_dilation(protect, iterations=1)
+        return clean(np.clip(img, 0, 255).astype(np.uint8), protect=protect, passes=2).astype(float)
 
     def add(self, *effects):
         self.effects.extend(effects)
@@ -143,6 +157,8 @@ class Location:
         if self.denoise:
             lab = mode_filter(lab, 1)
         self.plate_img = self.pal[lab]
+        if self.clean_base:
+            self.plate_img = self._clean(self.plate_img)
         cols = [self.pal]
         for e in self.effects:
             c = e.colors()

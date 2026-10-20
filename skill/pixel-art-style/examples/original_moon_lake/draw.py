@@ -1,4 +1,4 @@
-"""'Moon Lake' v3 — cinematic version: a great castle on the island (curtain walls,
+"""'Moon Lake' v4 (castle built with the detailing kit, grid x3) — from v3 — cinematic version: a great castle on the island (curtain walls,
 five towers, a great hall, a gatehouse), mountains receding in hazy layers, every
 object standing on real ground (placed from the ground mask, with contact shadows),
 deep shadows, a vignette and moon rays.
@@ -11,10 +11,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from pixel_canvas import Canvas, BAYER4
 from fx import tile_noise
 
-S = 2
+S = 3
 W, H = 384 * S, 216 * S
-OUT_SCALE = 2
-os.makedirs('stage3', exist_ok=True)
+OUT_SCALE = 1
+os.makedirs('stage4', exist_ok=True)
 
 PAL = [
     '#050410', '#0b0918', '#110e24', '#181431', '#211b40', '#2c2452', '#3a2f63', '#4b3d75', '#5e4d86',
@@ -29,6 +29,7 @@ PAL = [
     '#2a120e', '#3a1c16', '#5a2a1c', '#8c3d1e', '#c8642a', '#f09a3e', '#ffc86a', '#ffeab0',
     '#123a44', '#1e5a64', '#2f8f94', '#5fd4c8', '#b4fff0',
     '#1c110d', '#2a1a14', '#3d281c', '#55382a',
+    '#2a0d10', '#4a1418', '#6e1c1e', '#9a2a26', '#c8963a',
 ]
 cv = Canvas(W, H, PAL)
 yy, xx = cv.yy, cv.xx
@@ -260,7 +261,12 @@ for fx_, w0, w1 in [(103, 5, 9), (348, 5, 9)]:
     foam = cv.ellipse_mask(fx_ * S, 156 * S, w1 * S, 3 * S) & (N(1, fx_ + 1) > 0.4)
     cv.paint(foam, '#a9a2cc')
     cv.paint(foam & (B < 0.3), '#d6cde6')
-    falls.append(fm | foam)
+    fm_all = fm | foam
+    lab_, n_ = ndimage.label(fm_all)
+    if n_ > 1:
+        sizes_ = np.bincount(lab_.ravel()); sizes_[0] = 0
+        fm_all = lab_ == np.argmax(sizes_)
+    falls.append(fm_all)
 
 # ================= 4. LAKE =================
 lake = yy >= LAKE
@@ -273,122 +279,165 @@ cv.paint(lake & (rip > 0.76), '#241f48')
 cv.paint(lake & (rip < 0.3), '#0c0a1e')
 cv.paint((yy >= LAKE) & (yy < LAKE + S) & ~(cliff_l | cliff_r), '#2c2452')
 
-# ================= 5. THE CASTLE =================
+# ================= 5. THE CASTLE (detailing kit) =================
+from objects import Kit
 AX = 160 * S
 island = poly([(166, 160), (174, 151), (186, 144), (204, 139), (232, 136), (270, 135), (296, 139), (312, 146),
                (322, 154), (326, 160)])
 crag(island, ['#070611', '#0a0817', '#100d22', '#17142e'], scale=5, seed=60, rough=0.8)
 cv.paint(island & ~roll(island, 1, 0), '#2f2a58')
+kit = Kit(cv, light=(MX, MY - 40 * S))
+STONE = ['#070611', '#100d22', '#17142e', '#1e1a3a', '#2f2a58', '#3a3468']
+STONE_FAR = ['#0a0817', '#17142e', '#1e1a3a', '#262248', '#2f2a58', '#3a3468']
+SLATE = ['#050410', '#0a0817', '#100d22', '#1e1a3a', '#2f2a58', '#3a3468']
 castle = np.zeros((H, W), bool)
 roofs = np.zeros((H, W), bool)
 wins = np.zeros((H, W), bool)
+flame_pts, banners, pennants, chimneys = [], [], [], []
+Xs = lambda v: v * S
 
 
-def tower(cx, w, top, base, roof_h, spire=False):
-    """Round-ish tower: body + conical roof (+ finial). Returns body, roof masks."""
-    body = rect(cx - w / 2, top, cx + w / 2, base)
-    roof = poly([(cx - w / 2 - 1.5, top), (cx + w / 2 + 1.5, top), (cx, top - roof_h)])
-    roof |= rect(cx - 0.5, top - roof_h - 4, cx + 0.5, top - roof_h + 1)
-    return body, roof
+def add(d):
+    global castle, roofs
+    for k, m in d.items():
+        if isinstance(m, np.ndarray):
+            castle |= m
+            if k == 'roof':
+                roofs |= m
 
 
-def lancet(x, y, w, h):
-    return rect(x, y + w / 2, x + w, y + h) | poly([(x, y + w / 2), (x + w, y + w / 2), (x + w / 2, y)])
-
-
-def window(x, y, w, h, teal=False):
+def win(x, y, w, h, kind='lancet', spill=0.08, frame=STONE):
     global wins
-    m = lancet(x, y, w, h)
-    if teal:
-        cv.paint(m, '#2f8f94'); cv.paint(cv._erode(m), '#5fd4c8')
-    else:
-        cv.paint(m, '#8c3d1e'); cv.paint(cv._erode(m), '#f09a3e'); cv.paint(cv._erode(cv._erode(m)), '#ffc86a')
+    m = kit.window(Xs(x), Xs(y), int(w * S), int(h * S), frame, kind=kind, spill=spill)
     wins |= m
     return m
 
 
-# order: back to front
-parts = []
-# far towers (smaller, behind the wall)
-for (cx, w, top, base, rh) in [(186, 8, 116, 150, 14), (304, 8, 114, 150, 15)]:
-    b, r_ = tower(cx, w, top, base, rh)
-    parts.append((b, r_))
-# great hall (left of the keep) with a steep roof and tall windows
-hall = rect(204, 106, 236, 140)
-hall_roof = poly([(202, 106), (238, 106), (230, 92), (210, 92)])
-parts.append((hall, hall_roof))
-# left big tower, right big tower
-lt_b, lt_r = tower(197, 13, 98, 146, 20)
-rt_b, rt_r = tower(284, 13, 100, 146, 20)
-parts += [(lt_b, lt_r), (rt_b, rt_r)]
-# the keep under the moon, with turrets
-keep = rect(240, 72, 262, 140) | rect(237, 68, 265, 73) | rect(236, 96, 266, 99)
-keep_roof = poly([(240, 68), (262, 68), (251, 14)]) | rect(250.5, 6, 251.5, 15)
-tur = np.zeros((H, W), bool); tur_r = np.zeros((H, W), bool)
-for tx in (235.5, 266.5):
-    tur |= rect(tx - 3, 80, tx + 3, 126)
-    tur_r |= poly([(tx - 4, 80), (tx + 4, 80), (tx, 58)]) | rect(tx - 0.5, 53, tx + 0.5, 59)
-parts += [(keep | tur, keep_roof | tur_r)]
-# curtain wall in front, with merlons and a gatehouse
-wall = rect(180, 132, 312, 152)
-merlons = np.zeros((H, W), bool)
-for mx_ in np.arange(180, 312, 3):
-    merlons |= rect(mx_, 129.5, mx_ + 1.5, 132)
-gate = rect(240, 124, 262, 152) | poly([(238, 124), (264, 124), (251, 114)])
-parts += [(wall | merlons, np.zeros((H, W), bool)), (gate, np.zeros((H, W), bool))]
+# --- back towers (smaller stones = farther)
+for (cx, base, w, h, rh, sd) in [(186, 150, 9, 34, 16, 1), (304, 150, 9, 36, 17, 2)]:
+    t = kit.round_tower(Xs(cx), Xs(base), Xs(w), Xs(h), STONE_FAR, roof=SLATE, roof_h=Xs(rh), seed=sd, slits=1)
+    add(t); pennants.append(t['tip'])
+    win(cx - 1, base - h + 8, 2, 5)
 
-for body, roof in parts:
-    # bodies: dark stone with courses; the side facing away from the moon is darkest
-    cv.paint(body, '#100d22')
-    cv.paint(body & ((yy // S) % 5 == 0), '#0a0817')
-    cv.paint(body & ((yy // S) % 5 != 0) & (((xx // S) + ((yy // (5 * S)) % 2) * 3) % 6 == 0), '#0a0817')
-    edge = body & ~cv._erode(body)
-    cv.paint(edge & (dist < MR + 60 * S), '#2f2a58')
-    cv.paint(edge & (dist < MR + 10 * S), '#574a80')
-    # roofs: slate scallops
-    cv.paint(roof, '#0a0817')
-    cv.paint(roof & (((yy // S) % 3 == 0) | ((((xx // S) + (yy // (3 * S))) % 4 == 0) & ((yy // S) % 3 == 1))), '#17142e')
-    cv.paint(roof & ~cv._erode(roof) & (dist < MR + 60 * S), '#262248')
-    castle |= body | roof
-    roofs |= roof
-# cast shadow of the keep on the hall and wall (moon behind -> shadows fall toward the viewer)
-cv.rgb[(hall | wall) & (np.abs(xx - 251 * S) < 14 * S)] *= 0.7
-# windows
-for (x, y, w, h) in [(248.5, 100, 5, 12), (243, 78, 2.5, 7), (256.5, 78, 2.5, 7), (243.5, 112, 2.5, 7), (256, 112, 2.5, 7),
-                      (207, 112, 3, 12), (214, 112, 3, 12), (221, 112, 3, 12), (228, 112, 3, 12),
-                      (195.5, 104, 3, 7), (195.5, 120, 3, 6), (282.5, 106, 3, 7), (282.5, 122, 3, 6),
-                      (185, 124, 2, 4), (303, 122, 2, 4), (234.5, 100, 2, 5), (265.5, 100, 2, 5)]:
-    window(x, y, w, h)
-cv.paint(rect(250.5, 102, 251.5, 112) | rect(248.5, 106, 253.5, 107), '#5a2a1c')
-teal_win = window(249.5, 38, 3, 7, teal=True)
-gate_door = lancet(246, 136, 10, 16)
-cv.paint(gate_door, '#5a2a1c'); cv.paint(cv._erode(gate_door), '#8c3d1e')
-cv.paint(rect(246, 140, 256, 152) & ((xx // S) % 2 == 0), '#3a1c16')       # portcullis bars
-emissive |= wins | gate_door
-# ivy on the lower walls
-ivy = castle & ~roofs & (yy > 128 * S) & (N(1.2, 80) > 0.55) & (N(6, 81) > 0.45)
-cv.paint(ivy, '#0c1418'); cv.paint(ivy & ~roll(ivy, 0, 1), '#122026')
-# steps from the gate down to a dock on the waterline
+# --- great hall: wall with buttresses between tall traceried windows, tiled roof, chimney
+hall = rect(204, 106, 236, 140)
+kit.masonry(hall, STONE, bw=6, bh=3, seed=10, shift=kit.ao_shift(hall, 10, 1.0))
+hall_roof = poly([(202, 106), (238, 106), (231, 90), (209, 90)])
+kit.roof_tiles(hall_roof, SLATE, tw=5, th=3, seed=11, axis_x=Xs(220))
+cv.paint(kit.edge(hall_roof, 0, 1), SLATE[0])
+cv.paint(hall & (yy < Xs(106) + 3), STONE[0])                                     # eave shadow
+add(dict(body=hall, roof=hall_roof))
+for i, wx in enumerate((207.5, 214.5, 221.5, 228.5)):
+    win(wx, 112, 3, 14, spill=0.06)
+for bx in (211.5, 218.5, 225.5):
+    castle |= kit.buttress(Xs(bx), Xs(140), 3 * S - 1, Xs(16), STONE, seed=12)
+chim = rect(226, 84, 230, 96)
+kit.masonry(chim, STONE, bw=4, bh=3, seed=13)
+cv.paint(rect(225.5, 83, 230.5, 85), STONE[4])
+castle |= chim; chimneys.append((Xs(228), Xs(83)))
+
+# --- flanking round towers
+for (cx, base, w, h, rh, sd) in [(197, 146, 13, 48, 22, 3), (284, 146, 13, 46, 22, 4)]:
+    t = kit.round_tower(Xs(cx), Xs(base), Xs(w), Xs(h), STONE, roof=SLATE, roof_h=Xs(rh), seed=sd, slits=2)
+    add(t); pennants.append(t['tip'])
+    win(cx - 1.5, base - h + 10, 3, 7, spill=0.08)
+    win(cx - 1.5, base - h + 26, 3, 6, spill=0.06)
+    kit.ivy(t['body'] & (yy > Xs(base - 14)), density=0.9, seed=sd)
+
+# --- right wing between keep and right tower
+wing = rect(266, 112, 278, 140)
+kit.masonry(wing, STONE, bw=5, bh=3, seed=14, shift=kit.ao_shift(wing, 8, 1.0))
+wing_roof = poly([(265, 112), (279, 112), (272, 100)])
+kit.roof_tiles(wing_roof, SLATE, tw=4, th=3, seed=15, axis_x=Xs(272))
+add(dict(body=wing, roof=wing_roof))
+win(268.5, 118, 2.5, 7); win(273.5, 118, 2.5, 7)
+
+# --- the keep: square body, corner turrets, belt course, corbelled cornice, spire with a teal dormer
+keep = rect(240, 72, 262, 140)
+plane = np.where(xx > Xs(251), 0.5, -0.3) * 1.0                                 # moon side a little lighter
+kit.masonry(keep, STONE, bw=6, bh=3, seed=20, shift=plane + kit.ao_shift(keep, 10, 1.0))
+cv.paint(kit.edge(keep, 1, 0), STONE[-1]); cv.paint(kit.edge(keep, -1, 0), STONE[0])
+belt = rect(239, 96, 263, 99)
+kit.masonry(belt, STONE, bw=4, bh=3, seed=21, base=3)
+cv.paint(belt & (yy == Xs(96)), STONE[-1])
+cv.paint(keep & (yy >= Xs(99)) & (yy < Xs(99) + 2), STONE[0])                    # the belt's shadow
+cornice = rect(238, 67, 264, 72)
+cv.paint(cornice, STONE[3])
+cv.paint(cornice & (yy == Xs(67)), STONE[-1])
+cv.paint(cornice & (yy >= Xs(69)) & (((xx // S) % 2) == 0), STONE[0])             # corbels
+cv.paint(keep & (yy < Xs(72) + 3), STONE[0])
+spire = kit.cone(Xs(251), Xs(67), Xs(24), Xs(53), flare=2, bell=0.12)
+kit.roof_tiles(spire, SLATE, tw=4, th=3, seed=22, axis_x=Xs(251))
+fin = rect(250.5, 6, 251.5, 15)
+cv.paint(fin, STONE[2]); cv.paint(cv.ellipse_mask(Xs(251), Xs(9), 1.6 * S, 1.6 * S), STONE[4])
+dormer = poly([(247.5, 44), (254.5, 44), (251, 38)]) | rect(248, 44, 254, 50)
+cv.paint(dormer, STONE[2]); cv.paint(kit.edge(dormer, 1, 0), STONE[-1])
+teal_win = kit.window(Xs(249.5), Xs(42), 3 * S, 7 * S, STONE, kind='lancet',
+                      glass=['#123a44', '#1e5a64', '#2f8f94', '#5fd4c8', '#b4fff0', '#b4fff0'])
+add(dict(body=keep | belt | cornice | dormer | fin, roof=spire))
+for tx in (235.5, 266.5):
+    t = kit.round_tower(Xs(tx), Xs(126), Xs(6), Xs(46), STONE, roof=SLATE, roof_h=Xs(22), seed=int(tx), corbels=True, slits=1)
+    add(t)
+big = win(248.5, 101, 5, 12, spill=0.12)
+cv.paint(rect(250.5, 103, 251.5, 113), '#5a2a1c'); cv.paint(rect(248.5, 107, 253.5, 108), '#5a2a1c')
+balcony = rect(246, 114, 256, 116)
+cv.paint(balcony, STONE[4]); cv.paint(rect(246, 116, 256, 117), STONE[0])
+for bx in np.arange(246.5, 256, 1.5):
+    cv.paint(rect(bx, 112, bx + 0.6, 114), STONE[3])
+cv.paint(rect(245.5, 111.5, 256.5, 112.3), STONE[4])
+castle |= balcony
+for (x, y) in [(243, 78), (256.5, 78), (243.5, 121), (256, 121), (243, 86), (256.5, 86)]:
+    win(x, y, 2.5, 6, spill=0.05)
+
+# --- curtain wall + gatehouse with torches and banners
+cw = kit.wall(Xs(180), Xs(312), Xs(132), Xs(152), STONE, seed=30, merlon_w=4, gap=3, slits=8)
+add(cw)
+gh = rect(238, 120, 264, 152)
+kit.masonry(gh, STONE, bw=6, bh=3, seed=31, shift=np.where(xx > Xs(251), 0.4, -0.2) + kit.ao_shift(gh, 10, 1.0))
+gm = rect(237, 116, 265, 120) & ((((xx // S) - 237) % 4) < 2)
+kit.masonry(gm, STONE, bw=4, bh=3, seed=32)
+cv.paint(gm & (yy == Xs(116)), STONE[-1])
+cv.paint(gh & (yy < Xs(120) + 2), STONE[0])
+cv.paint(kit.edge(gh, 1, 0), STONE[-1]); cv.paint(kit.edge(gh, -1, 0), STONE[0])
+g = kit.gate(Xs(251), Xs(152), Xs(11), Xs(18), STONE)
+add(dict(body=gh | gm))
+for tx in (241.5, 260.5):
+    cv.paint(rect(tx - 0.5, 136, tx + 0.5, 141), '#1c110d')                       # torch bracket
+    cv.paint(rect(tx - 1, 135, tx + 1, 136), '#3d281c')
+    flame_pts.append((Xs(tx), Xs(135)))
+for bx in (231, 266):
+    m_, em_ = kit.banner(Xs(bx), Xs(124), 5 * S, 15 * S)
+    banners.append((m_, em_)); castle |= m_
+kit.ivy((cw['body'] | gh) & (yy > Xs(142)), density=1.0, seed=33)
+
+# cast shadow of the keep on the hall roof / wall top (moon behind -> shadows fall forward)
+cv.rgb[(hall | cw['body'] | hall_roof) & (np.abs(xx - Xs(251)) < Xs(16)) & ~kit.emissive] *= 0.75
+emissive |= kit.emissive
+wins |= kit.emissive & ~(teal_win | g['hole'])
+gate_door = g['hole']
+
+# steps down to the dock
 steps = np.zeros((H, W), bool)
 for i in range(4):
     steps |= rect(244 - i, 152 + i * 2, 258 + i, 154 + i * 2)
 steps &= island | (yy < AX)
-cv.paint(steps, '#211c2e'); cv.paint(steps & ~roll(steps, 1, 0), '#40375a')
+kit.masonry(steps, STONE, bw=5, bh=2, seed=40, base=3)
+cv.paint(steps & ~roll(steps, 1, 0), STONE[-1])
 dock = rect(236, 158, 266, 160) | rect(237, 160, 238, 164) | rect(264, 160, 265, 164)
-cv.paint(dock, '#2a1a14'); cv.paint(rect(236, 158, 266, 159), '#55382a')
+kit.planks(dock, ['#1c110d', '#2a1a14', '#3d281c', '#55382a'], ph=2, vertical=True)
+cv.paint(rect(236, 158, 266, 159), '#55382a')
 
-# bridge: from the right tower (x 290) to the right cliff face — both ends on stone
-bx0 = 290
-deck_y = 138
+# bridge: right tower -> right cliff, voussoir arches, parapet, two lamps
+bx0, deck_y = 290, 138
 bridge = rect(bx0, deck_y, 333, deck_y + 4)
 for i in range(3):
     cx = 298 + i * 12
     bridge |= rect(cx - 6, deck_y + 4, cx + 6, 158) & ~cv.ellipse_mask(cx * S, 158 * S, 4.5 * S, 12 * S)
 bridge &= ~cliff_r | (yy < deck_y * S + 4 * S)
-cv.paint(bridge, '#0a0817')
-cv.paint(bridge & ~roll(bridge, 1, 0), '#2f2840')
-cv.paint(bridge & ((yy // S) % 3 == 0) & (yy > (deck_y + 4) * S), '#070611')
-cv.paint(rect(bx0, deck_y - 2, 333, deck_y) & ((xx // S) % 3 != 0), '#100d22')
+kit.masonry(bridge, STONE, bw=5, bh=3, seed=41, shift=kit.ao_shift(bridge, 6, 0.8))
+cv.paint(bridge & ~roll(bridge, 1, 0), STONE[-1])
+par = rect(bx0, deck_y - 2, 333, deck_y) & ((xx // S) % 3 != 0)
+cv.paint(par, STONE[3]); cv.paint(par & (yy == Xs(deck_y - 2)), STONE[-1])
 lamps = np.zeros((H, W), bool)
 for lx in (300, 316):
     cv.paint(rect(lx, deck_y - 8, lx + 1, deck_y), '#070611')
@@ -396,6 +445,9 @@ for lx in (300, 316):
     lm = rect(lx, deck_y - 9, lx + 1, deck_y - 8)
     cv.paint(lm, '#ffc86a'); lamps |= lm
 emissive |= lamps
+for (px_, py_) in pennants:
+    pm = kit.pennant(px_ + 1, py_ - 1, length=4 * S, height=2 * S)
+    castle |= pm
 
 # ================= 6. REFLECTIONS + MOON PATH =================
 obj = castle | island | bridge
@@ -600,13 +652,22 @@ vig = vig * np.clip(1 - np.clip((yy - 190 * S) / (26 * S), 0, 1) * 0.25, 0, 1)
 dark = ~emissive & ~ndimage.binary_dilation(emissive, iterations=S)
 cv.rgb[dark] *= vig[dark][:, None]
 
-cv.save('stage3/still', scale=OUT_SCALE)
-img = Image.open('stage3/still_native.png')
-img.save('stage3/native.png')
-img.resize((W * OUT_SCALE, H * OUT_SCALE), Image.NEAREST).save('stage3/big.png')
-np.savez_compressed('stage3/masks.npz', falls0=falls[0], falls1=falls[1], lake=lake, moon_path=moon_path,
+# ================= 9. CLEAN-UP (artifact_check) =================
+from artifact_check import clean
+art = cv.snap()
+stars_zone = (yy < 100 * S) & ~castle & ~cl
+protect = ndimage.binary_dilation(emissive, iterations=1) | stars_zone
+art = clean(art, protect=protect, passes=2)
+cv.rgb = art.astype(float)
+cv.save('stage4/still', scale=OUT_SCALE)
+img = Image.open('stage4/still_native.png')
+img.save('stage4/native.png')
+img.resize((W * OUT_SCALE, H * OUT_SCALE), Image.NEAREST).save('stage4/big.png')
+np.savez_compressed('stage4/masks.npz', falls0=falls[0], falls1=falls[1], lake=lake, moon_path=moon_path,
                     wins=wins & ~teal_win, wins_teal=teal_win, lamps=lamps | boat_lamp, lrefl=lrefl | lamp_refl,
                     moss=moss, reeds=reeds, tree=tree, cloud=cl, moon=moon, mush=mush_caps, teal_flowers=teal_flowers,
-                    ferns=ferns, boat=boat | boat_refl, ledge=ledge, castle=castle)
-np.save('stage3/flame.npy', np.array(flame_base))
+                    ferns=ferns, boat=boat | boat_refl, ledge=ledge, castle=castle, island=island | steps | dock,
+                    banner0=banners[0][0], emb0=banners[0][1], banner1=banners[1][0], emb1=banners[1][1],
+                    flames=np.array(flame_pts), chimneys=np.array(chimneys), pennants=np.array(pennants))
+np.save('stage4/flame.npy', np.array(flame_base))
 print('ok', W, H)
