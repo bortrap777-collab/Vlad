@@ -31,6 +31,7 @@ Scripts live in `scripts/` next to this file:
 | `inspect_frames.py FRAMES OUT` | animation QA: flicker (A→B→A shimmer) per region, loop seam, motion map |
 | `location.py` | **living location** (approach E): repaint once at the finest grid, effects redrawn per frame, one GIF-safe palette; writes GIF (ref size + ×2), native frames, Pixelorama spritesheet, still |
 | `fx.py` | the effects: `Liquid` (lava/pond, flow-map drift), `Fall` (water/lava falls), `Ripple`, `Flame` (sprite fire, candles to bonfires), `Lights` (windows, lanterns), `Particles` (ember, firefly, dust, drip, leaf, snow, bird, butterfly), `Smoke`, `Mist`, `Sway` (plants, crowns), `Swing` (cages, hanging lamps), `Banner`, `Breathe` (slow area light) |
+| `photo_to_pixel.py PHOTO OUT --width 320` | **photo → pixel art** (approach F): median smoothing at 2× grid, style grading, small k-means palette pulled toward the reference palette (`--style`), ordered dither only in smooth gradients, selective outline; `leaf_clumps()` turns photo bokeh foliage into lit leaf clusters |
 | `zoom_grid.py REF x0 y0 x1 y1 OUT [k]` | enlarged crop of the reference with a coordinate grid — find boxes for masks |
 | `frame_strip.py FRAMES x0 y0 x1 y1 OUT [k] [frames…]` | the same crop from several frames stacked — judge motion by eye |
 
@@ -207,6 +208,29 @@ Lessons from approach E (each was a visible defect first):
   clouds.
 - The repaint palette stays fixed when effect colours are merged in (else the whole
   picture shifts colour).
+
+**F. Photo → pixel art (+ animation)** («нарисуй это фото как пиксель-арт»). Keep the
+likeness and the photo's light, move it into the user's colour world, then animate it
+with approach E. `examples/photo_portrait.py` is the worked script (sunset portrait in
+fog). Steps:
+1. `convert(photo, width=320, colors≈56, grade_k≈1.4, sat≈1.35, style=<ref style.json>,
+   style_mix≈0.35)`. 300–360 art px across keeps a face readable (~40 px) while every
+   pixel still shows at ×4.
+2. A plain resize is a "low-res photo", not pixel art. What makes it read as pixel
+   art: flat clusters (median before reduction), a small palette, Bayer dither ONLY in
+   smooth gradients (sky, fog, skin) so they become short dithered steps instead of
+   posterized bands, crisp edges, outline only on very strong edges (interior outlines
+   on hands looked dirty).
+3. Foliage in photos is bokeh: `leaf_clumps(img, mask, light=sun_xy)` on the crowns
+   against the sky only (on misty midground it draws worm-like noise).
+4. Feed `big.png` to `Location(big, grid=scale, unit=1, n_colors=200, sharpen=0,
+   denoise=False)` — the art is final, the Location must not repaint it.
+5. Animation on a dithered picture: `Mist(..., dither=True)` (a smooth tint snaps into
+   blotches); sway only foliage that touches sky (a solid block shears at its box
+   edges); a horizontal flying lock of hair is a `SheetX` held at the head, not a
+   `Sway` (rows-only motion barely moves it); the face stays still.
+6. Faces: keep the photo's own shading; at ~40 px the eyes/lips read without redrawing.
+   A real person's photo is their likeness — don't add or change features unasked.
 
 ### 3. Draw
 Write one Python script per piece (keep it — it's the editable source). Fill the whole

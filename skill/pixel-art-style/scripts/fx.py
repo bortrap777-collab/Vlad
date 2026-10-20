@@ -30,6 +30,7 @@ import numpy as np
 from scipy import ndimage
 
 TAU = 2 * np.pi
+BAYER = (np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]]) + 0.5) / 16
 W8 = np.array([0.30, 0.59, 0.11]) ** 0.5
 LUM = np.array([0.30, 0.59, 0.11])
 
@@ -783,7 +784,8 @@ class Mist(Effect):
     lives, soft edges). alpha = max opacity. Calm and seamless."""
     layer = 18
 
-    def __init__(self, zone, col=(150, 140, 160), alpha=0.3, scale=30, stretch=3.0, drift=8, seed=0):
+    def __init__(self, zone, col=(150, 140, 160), alpha=0.3, scale=30, stretch=3.0, drift=8, seed=0, dither=False):
+        self.dither = dither
         self.zone = zone; self.col = np.asarray(col, float); self.alpha = alpha
         self.scale = scale; self.stretch = stretch; self.drift = drift; self.seed = seed
 
@@ -805,7 +807,16 @@ class Mist(Effect):
         fb = sample(self.b, self.yy, self.xx - ox)
         field = fa * t + fb * (1 - t)
         a = np.clip((field - 0.42) * 2.2, 0, 1) * self.alpha * self.zone
-        img += (self.col - img) * a[..., None]
+        if self.dither:
+            # ordered-dithered fog: each pixel is either untouched or tinted by one fixed
+            # step, so a dithered picture (photo conversions) keeps its texture instead
+            # of the tint snapping into flat blotches
+            H, W = a.shape
+            B = BAYER[self.yy.astype(int) % 4, self.xx.astype(int) % 4]
+            on = (a / max(self.alpha, 1e-6)) > B
+            img[on] += (self.col - img[on]) * self.alpha
+        else:
+            img += (self.col - img) * a[..., None]
 
 
 class Custom(Effect):
