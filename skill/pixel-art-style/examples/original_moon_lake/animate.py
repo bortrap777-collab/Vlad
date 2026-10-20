@@ -9,15 +9,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from location import Location
 import fx
 
-M = np.load('stage2/masks.npz')
-FX, FY = np.load('stage2/flame.npy')
-L = Location('stage2/big.png', grid=2, unit=2, N=24, n_colors=230, grade_k=0.0, sharpen=0.0, denoise=False)
+M = np.load('stage3/masks.npz')
+FX, FY = np.load('stage3/flame.npy')
+L = Location('stage3/big.png', grid=2, unit=2, N=24, n_colors=230, grade_k=0.0, sharpen=0.0, denoise=False)
 hue, Lt, S, box, yy, xx, u = L.hue, L.L, L.S, L.box, L.yy, L.xx, L.u
 
-lake = M['lake'] & ~M['boat'] & (yy > 156 * u)
+lake = M['lake'] & ~M['boat'] & (yy > 157 * u)
 moon_path = M['moon_path'] & lake
-mist = np.clip(1 - np.abs(yy / u - 152) / 14, 0, 1) * ~M['tree'] * np.clip((xx / u - 90) / 20, 0, 1)   # behind the foreground ledge only
-MX, MY = 252 * u, 66 * u
+mist = np.clip(1 - np.abs(yy / u - 152) / 12, 0, 1) * ~M['tree'] * ~M['ledge'] * ~M['castle']   # over water and far shore only
+MX, MY = 252 * u, 58 * u
 stars = (yy < 100 * u) & (Lt > 0.72) & (np.hypot(xx - MX, yy - MY) > 80 * u) & ~M['cloud']
 star_px = np.argwhere(stars)
 rng = np.random.default_rng(3)
@@ -50,7 +50,7 @@ wisp_cols = [[190, 255, 244], [95, 212, 200], [47, 143, 148]]
 L.add(fx.Breathe(np.clip(1 - np.hypot(xx - MX, yy - MY) / (110 * u), 0, 1) ** 2 * (yy < 150 * u), (180, 170, 220), k=0.1),
       *[fx.Fall(M[k], n=6, speed=2 * u, scale=3 * u, seed=i, foam_rows=3 * u, keep=0.45) for i, k in enumerate(('falls0', 'falls1'))],
       fx.Ripple(lake, amp=1.0 * u, freq=0.5 / u, cycles=2, sparkle=moon_path, sparkle_rate=0.84),
-      fx.Mist(mist, col=(140, 132, 186), alpha=0.28, scale=30 * u, stretch=4.0, drift=12 * u, seed=5, dither=True),
+      fx.Mist(mist, col=(140, 132, 186), alpha=0.3, scale=22 * u, stretch=4.0, drift=12 * u, seed=5, dither=True, thresh=0.52, gain=3.0),
       fx.Lights(M['wins'] | M['lrefl'], color=(255, 170, 80), radius=0.9, strength=0.12, core_amp=0.28, seed=6, max_r=12 * u),
       fx.Lights(M['lamps'], color=(255, 190, 100), radius=1.3, strength=0.18, core_amp=0.3, seed=7, max_r=10 * u),
       fx.Lights(teal, color=(95, 212, 200), radius=1.4, strength=0.16, core_amp=0.35, seed=13, max_r=12 * u, big_amp=0.6),
@@ -63,10 +63,10 @@ L.add(fx.Breathe(np.clip(1 - np.hypot(xx - MX, yy - MY) / (110 * u), 0, 1) ** 2 
       fx.Sway(M['ferns'], amp=0.8 * u, wavelength=50 * u, cycles=1, piece=5 * u, seed=11, min_px=4),
       fx.Custom(twinkle, layer=4),
       fx.Particles('firefly', (110, 150, 330, 210), count=14, seed=11, cols=wisp_cols),
-      fx.Particles('firefly', (10, 120, 130, 185), count=8, seed=12, cols=wisp_cols),
-      fx.Particles('bird', (205, 26, 300, 92), count=3, seed=13, cols=[[12, 10, 24], [24, 20, 40]]),
-      fx.Particles('leaf', (20, 60, 140, 170), count=5, seed=14, rise=40,
+      fx.Particles('firefly', (10, 140, 140, 185), count=8, seed=12, cols=wisp_cols),
+      fx.Particles('bird', (200, 20, 305, 86), count=3, seed=13, cols=[[12, 10, 24], [24, 20, 40]]),
+      fx.Particles('leaf', (100, 80, 200, 170), count=5, seed=14, rise=40,
                    cols=[[53, 88, 79], [36, 64, 63], [90, 70, 110]]))
 
 if __name__ == '__main__':
-    L.render('out2/moon_lake', ms=100, big=2)
+    L.render('out3/moon_lake', ms=100, big=2)

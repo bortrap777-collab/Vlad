@@ -136,6 +136,26 @@ in an earlier pass):
   lighter ramp and a rim, or they vanish into the cliff behind.
 - Story props make it a place: ruins with one lit window on a far peak, a boat with
   a lamp, a dock and steps, lily pads with glowing flowers, glowing mushrooms.
+- **Nothing floats, nothing sits where it can't** (user: «ели просто висят в
+  воздухе»). Every tree, lantern, mushroom, ruin and bridge end is placed from the
+  ground mask itself (`ground_y(mask, x)`: the top surface at that column) and sunk
+  1–3 px into it, with a contact shadow. Forests are planted along a ground strip
+  (`forest_on`), never on a guessed line. Falls start at their cliff's own edge.
+  Bridges end on stone at both sides. Pads/props avoid each other (keep-out mask).
+  Before delivering, brighten the still ×2 and inspect it in crops region by region.
+- **Depth**: mountains recede in layers — far = light, bluish, low contrast, snow on
+  the crest, fading into haze at the base; mid = darker with tiny pines on its
+  slopes; then the shore forest; then the subject. Never one flat wall behind it.
+- **A grand subject**: a castle is a composition, not one tower: back towers, a
+  hall with tall windows, flanking towers, the keep, a curtain wall with merlons and
+  a gatehouse in front (draw back to front), cast shadow of the keep on what is
+  below it, ivy at the base, steps to a dock.
+- **Cinematic**: deep shadows (foreground near-black, lake darker away from the
+  shore), a vignette that spares light sources, faint dithered moon rays, the only
+  saturated colours are the lights. A foreground silhouette (twisted tree) is placed
+  against a lighter background, or it disappears.
+- Mist over water must be patchy (`Mist(thresh≈0.52, gain≈3)`): a uniform dithered
+  band reads as a filter.
 - Animating your own drawing: `Location(big.png, grid=2, unit=2, n_colors=230,
   sharpen=0, denoise=False)`; mist only behind the foreground; the animated flame's
   glow is small when the still already holds the light pool; a bobbing boat is

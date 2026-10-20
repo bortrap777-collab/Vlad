@@ -792,8 +792,9 @@ class Mist(Effect):
     lives, soft edges). alpha = max opacity. Calm and seamless."""
     layer = 18
 
-    def __init__(self, zone, col=(150, 140, 160), alpha=0.3, scale=30, stretch=3.0, drift=8, seed=0, dither=False):
-        self.dither = dither
+    def __init__(self, zone, col=(150, 140, 160), alpha=0.3, scale=30, stretch=3.0, drift=8, seed=0, dither=False,
+                 thresh=0.42, gain=2.2):
+        self.dither = dither; self.thresh = thresh; self.gain = gain
         self.zone = zone; self.col = np.asarray(col, float); self.alpha = alpha
         self.scale = scale; self.stretch = stretch; self.drift = drift; self.seed = seed
 
@@ -814,7 +815,8 @@ class Mist(Effect):
         fa = sample(self.a, self.yy, self.xx + ox)
         fb = sample(self.b, self.yy, self.xx - ox)
         field = fa * t + fb * (1 - t)
-        a = np.clip((field - 0.42) * 2.2, 0, 1) * self.alpha * self.zone
+        # thresh/gain: higher thresh = patchier banks (a uniform band reads as a filter)
+        a = np.clip((field - self.thresh) * self.gain, 0, 1) * self.alpha * self.zone
         if self.dither:
             # ordered-dithered fog: each pixel is either untouched or tinted by one fixed
             # step, so a dithered picture (photo conversions) keeps its texture instead
