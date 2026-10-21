@@ -1,0 +1,128 @@
+/* W Studio — дизайн-токены.
+   Раскладка: одна колонка «как телефон», максимум 520px по центру на планшете/компьютере.
+   Тема: светлые значения на :root; тёмные — по prefers-color-scheme и вручную (.ws-dark). */
+:root {
+  --bg: #f6f5fb;
+  --surface: #ffffff;
+  --surface-2: #f0eef8;
+  --surface-3: #e7e4f2;
+  --text: #121019;
+  --text-2: #6b6880;
+  --text-3: #9a97ab;
+  --line: #e6e3f0;
+  --accent: #7656ff;
+  --accent-2: #9a6bff;
+  --accent-soft: #efeaff;
+  --accent-ink: #ffffff;
+  --danger: #e5484d;
+  --danger-soft: #fdecec;
+  --ok: #1f9d63;
+  --ok-soft: #e3f6ec;
+  --overlay: rgba(18, 16, 25, 0.42);
+  --stage-bg: #ebe9f3;
+  --shadow: 0 1px 2px rgba(30, 20, 70, 0.05), 0 8px 24px rgba(60, 40, 140, 0.07);
+  --logo-a: #4b7bff;
+  --logo-b: #b06bff;
+
+  --grad-video: linear-gradient(118deg, #5b9bff 0%, #7f6dff 52%, #c17bff 100%);
+  --grad-photo: linear-gradient(118deg, #ff8fae 0%, #f27ccb 50%, #a98cff 100%);
+
+  --font: 'Manrope', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --fs-display: 2.25rem;
+  --fs-title: 1.25rem;
+  --fs-body: 1rem;
+  --fs-small: 0.8125rem;
+  --fs-tiny: 0.6875rem;
+
+  --r-xl: 24px;
+  --r-lg: 18px;
+  --r-md: 14px;
+  --r-sm: 10px;
+  --tap: 44px;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0c0b12;
+    --surface: #17151f;
+    --surface-2: #201e2a;
+    --surface-3: #2a2836;
+    --text: #f4f2fa;
+    --text-2: #a19eb3;
+    --text-3: #6e6b80;
+    --line: #2a2835;
+    --accent: #8366ff;
+    --accent-2: #a27bff;
+    --accent-soft: #241d42;
+    --accent-ink: #ffffff;
+    --danger: #ff6369;
+    --danger-soft: #3a1a1f;
+    --ok: #3fcf8e;
+    --ok-soft: #12301f;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --stage-bg: #050409;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --logo-a: #6f8dff;
+    --logo-b: #c27dff;
+    --grad-video: linear-gradient(118deg, #3f7af0 0%, #6c4ff0 52%, #a65cf0 100%);
+    --grad-photo: linear-gradient(118deg, #f26f97 0%, #d75ec0 50%, #8a6df0 100%);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'],
+html:root.ws-dark {
+  --bg: #0c0b12;
+  --surface: #17151f;
+  --surface-2: #201e2a;
+  --surface-3: #2a2836;
+  --text: #f4f2fa;
+  --text-2: #a19eb3;
+  --text-3: #6e6b80;
+  --line: #2a2835;
+  --accent: #8366ff;
+  --accent-2: #a27bff;
+  --accent-soft: #241d42;
+  --accent-ink: #ffffff;
+  --danger: #ff6369;
+  --danger-soft: #3a1a1f;
+  --ok: #3fcf8e;
+  --ok-soft: #12301f;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --stage-bg: #050409;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --logo-a: #6f8dff;
+  --logo-b: #c27dff;
+  --grad-video: linear-gradient(118deg, #3f7af0 0%, #6c4ff0 52%, #a65cf0 100%);
+  --grad-photo: linear-gradient(118deg, #f26f97 0%, #d75ec0 50%, #8a6df0 100%);
+  color-scheme: dark;
+}
+
+/* Ручной выбор светлой темы перекрывает тёмную системную. */
+html:root.ws-light {
+  --bg: #f6f5fb;
+  --surface: #ffffff;
+  --surface-2: #f0eef8;
+  --surface-3: #e7e4f2;
+  --text: #121019;
+  --text-2: #6b6880;
+  --text-3: #9a97ab;
+  --line: #e6e3f0;
+  --accent: #7656ff;
+  --accent-2: #9a6bff;
+  --accent-soft: #efeaff;
+  --accent-ink: #ffffff;
+  --danger: #e5484d;
+  --danger-soft: #fdecec;
+  --ok: #1f9d63;
+  --ok-soft: #e3f6ec;
+  --overlay: rgba(18, 16, 25, 0.42);
+  --stage-bg: #ebe9f3;
+  --shadow: 0 1px 2px rgba(30, 20, 70, 0.05), 0 8px 24px rgba(60, 40, 140, 0.07);
+  --logo-a: #4b7bff;
+  --logo-b: #b06bff;
+  --grad-video: linear-gradient(118deg, #5b9bff 0%, #7f6dff 52%, #c17bff 100%);
+  --grad-photo: linear-gradient(118deg, #ff8fae 0%, #f27ccb 50%, #a98cff 100%);
+  color-scheme: light;
+}
