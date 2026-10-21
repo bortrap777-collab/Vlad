@@ -21,6 +21,11 @@ Per location: `<name>_x2.gif` (for viewing), `<name>.gif` (tile size),
 
 ## Skill
 
+`skill/detailed-rendering/` — standalone detailing skill for any style: construction,
+materials (stone, tiles, wood, rock, bark, moss, grass, water edges), shadows (contact,
+cast, overhang), placement on real ground, artifact check + clean-up, lessons log.
+`skill/detailed-rendering.zip` is the same folder packed for upload.
+
 `skill/pixel-art-style/` — the improved `pixel-art-style` skill (new: approach E
 "living location", `scripts/location.py`, `scripts/fx.py`, six worked examples in
 `examples/living_locations/`). `skill/pixel-art-style.zip` is the same folder packed

@@ -47,7 +47,8 @@ layer order and the parameter ranges that worked.
 Read `references/craft.md` before drawing a character or an animation; it holds the
 pixel-art craft rules (ramps, hue shifting, clusters, outlines, animation timing).
 
-**Detailing sub-skill — always on.** Read `references/lessons.md` (the running log
+**Detailing sub-skill — always on** (also published standalone as the
+`detailed-rendering` skill, for any style). Read `references/lessons.md` (the running log
 of corrections) before every piece, and run the detailing pass from
 `references/detailing.md` on the focal subject and every large or close object:
 construct logically (supported, joined, back to front) → texture by construction

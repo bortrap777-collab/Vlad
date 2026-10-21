@@ -365,3 +365,215 @@ class Kit:
         cv.paint(m, cloth[0])
         cv.paint(m & ~self.roll(m, 1, 0), cloth[1])
         return m
+
+
+# =====================================================================
+# Natural materials, placement and shadows (style-agnostic additions)
+# =====================================================================
+from fx import tile_noise as _tile_noise
+
+
+class Nature:
+    """Rock, bark, foliage, grass, pebbles, moss, wet streaks, foam, plus placement
+    (ground_y, plant, contact_shadow) and cast shadows from a point light.
+    Works on the same Canvas; ramps are hex lists dark -> light; light = (x, y)."""
+
+    def __init__(self, cv, light=(0, 0)):
+        self.cv = cv
+        self.H, self.W = cv.h, cv.w
+        self.yy, self.xx = cv.yy, cv.xx
+        self.light = light
+        self.B = BAYER4[self.yy % 4, self.xx % 4]
+
+    def N(self, scale, seed=0, octaves=3, stretch=(1, 1)):
+        return _tile_noise(self.H, self.W, scale, seed, octaves, stretch)
+
+    def paint_idx(self, mask, idx, ramp):
+        idx = np.clip(idx, 0, len(ramp) - 1)
+        for i, col in enumerate(ramp):
+            self.cv.paint(mask & (idx == i), col)
+
+    def roll(self, m, dy, dx):
+        return np.roll(np.roll(m, dy, 0), dx, 1)
+
+    # ---------------------------------------------------------- placement
+    def ground_y(self, mask, x):
+        col = np.nonzero(mask[:, int(np.clip(x, 0, self.W - 1))])[0]
+        return int(col.min()) if len(col) else None
+
+    def contact_shadow(self, ground, x, y, w, k=0.55, h=None):
+        h = h or max(1.5, w * 0.12)
+        sh = self.cv.ellipse_mask(x, y + 1, w * 0.6, h) & ground
+        self.cv.rgb[sh] *= k
+        return sh
+
+    # ---------------------------------------------------------- rock
+    def rock(self, mask, ramp, scale=14, seed=0, strata=True, cracks=True, rough=0.8, tilt=0.25):
+        """Natural rock: height-field facets lit from the light, horizontal strata
+        (bedding planes) gently tilted, dark cracks with a lit lower lip, and
+        rounded boulders' tops catching light. ramp: 5-6 steps."""
+        yy, xx = self.yy, self.xx
+        h = self.N(scale, seed, 4) + 0.4 * self.N(scale * 0.35, seed + 1, 2) * rough
+        gx = np.roll(h, -1, 1) - np.roll(h, 1, 1)
+        gy = np.roll(h, -1, 0) - np.roll(h, 1, 0)
+        lam = -(gx * np.sign(self.light[0] - xx) + gy * np.sign(self.light[1] - yy) * 0.6) * 8
+        vals = lam[mask]
+        if not len(vals):
+            return
+        n = len(ramp)
+        cuts = np.quantile(vals, np.linspace(0, 1, n)[1:-1] ** 0.9)
+        idx = np.searchsorted(cuts, lam) + 0                      # 0..n-2, keep the top step for rims
+        if strata:
+            layer = ((yy + xx * tilt + self.N(scale * 0.8, seed + 2, 1) * scale * 0.6) // max(3, scale * 0.35)).astype(int)
+            edge = layer != np.roll(layer, 1, 0)
+            idx = np.where(edge, idx + 1, idx)                     # lit lip of each bed
+            idx = np.where(np.roll(edge, -1, 0), idx - 1, idx)      # shadow under it
+        self.paint_idx(mask, idx, ramp)
+        if cracks:
+            c = np.abs(self.N(scale * 0.9, seed + 3, 2, stretch=(0.5, 1.6)) - 0.5) < 0.012
+            c &= mask
+            self.cv.paint(c, ramp[0])
+            self.cv.paint(self.roll(c, 1, 0) & mask & ~c, ramp[min(n - 1, 3)])
+        top = mask & ~self.roll(mask, 1, 0)
+        self.cv.paint(top, ramp[-1])
+
+    def boulders(self, ground, x0, x1, ramp, count=6, rmin=2, rmax=6, seed=0, below=0):
+        """Rounded stones sitting ON a ground mask (half-sunk), lit top, dark base."""
+        rng = np.random.default_rng(seed)
+        out = np.zeros((self.H, self.W), bool)
+        for _ in range(count):
+            x = rng.uniform(x0, x1)
+            gy = self.ground_y(ground, x)
+            if gy is None:
+                continue
+            r = rng.uniform(rmin, rmax)
+            cy = gy + below + r * 0.35
+            m = self.cv.ellipse_mask(x, cy, r * 1.25, r * 0.85) & (self.yy <= cy + r * 0.3)
+            d = np.hypot(self.xx - (x + r * 0.4 * np.sign(self.light[0] - x)), self.yy - (cy - r * 0.5)) / (r * 1.4)
+            idx = np.round((1 - np.clip(d, 0, 1)) * (len(ramp) - 2) + 0.5).astype(int)
+            self.paint_idx(m, idx, ramp)
+            self.cv.paint(m & ~self.roll(m, -1, 0), ramp[0])
+            self.cv.paint(m & ~self.roll(m, 1, 0), ramp[-1])
+            out |= m
+        return out
+
+    def pebbles(self, region, ramp, density=0.004, seed=0):
+        rng = np.random.default_rng(seed)
+        ys, xs = np.nonzero(region)
+        out = np.zeros((self.H, self.W), bool)
+        for i in rng.choice(len(ys), int(len(ys) * density), replace=False) if len(ys) else []:
+            y, x = ys[i], xs[i]
+            m = (np.abs(self.xx - x) <= 1) & (self.yy == y)
+            m |= (self.xx == x) & (self.yy == y - 1)
+            m &= region
+            self.cv.paint(m, ramp[2]); self.cv.paint(m & (self.yy == y - 1), ramp[3])
+            self.cv.paint((self.xx == x) & (self.yy == y + 1) & region, ramp[0])
+            out |= m
+        return out
+
+    # ---------------------------------------------------------- vegetation
+    def moss(self, mask, ramp, amount=0.5, seed=0, on_top=True, depth=6):
+        """Moss grows on upward-facing surfaces and in cracks, in soft clumps."""
+        yy = self.yy
+        up = mask & ~self.roll(mask, depth, 0) if on_top else mask
+        clumps = up & (self.N(4, seed, 2) > 1 - amount * 0.6) & (self.N(1.5, seed + 1, 1) > 0.35)
+        self.cv.paint(clumps, ramp[1])
+        self.cv.paint(clumps & ~self.roll(clumps, 1, 0), ramp[2])
+        self.cv.paint(clumps & ~self.roll(clumps, 1, 0) & (self.N(1, seed + 2, 1) > 0.6), ramp[3])
+        return clumps
+
+    def grass_tufts(self, ground, x0, x1, ramp, count=30, hmin=3, hmax=8, seed=0):
+        """Blades rooted on the ground surface, leaning with the wind, lit tips."""
+        rng = np.random.default_rng(seed)
+        out = np.zeros((self.H, self.W), bool)
+        for _ in range(count):
+            x = rng.uniform(x0, x1)
+            gy = self.ground_y(ground, x)
+            if gy is None:
+                continue
+            for b in range(rng.integers(3, 6)):
+                h = rng.uniform(hmin, hmax); lean = rng.uniform(-0.5, 0.5) * h
+                bx = x + rng.uniform(-2, 2)
+                m = self.cv.line_mask([(bx, gy + 1), (bx + lean, gy - h)], 1)
+                out |= m
+        self.cv.paint(out, ramp[1])
+        self.cv.paint(out & ~self.roll(out, 1, 0), ramp[-1])
+        self.cv.paint(out & ~self.roll(out, -1, 0), ramp[0])
+        return out
+
+    def bark(self, mask, ramp, seed=0, knots=4):
+        """Bark: vertical furrows following the trunk, lit ridge on the light side,
+        a few knots (dark ring + lit rim)."""
+        yy, xx = self.yy, self.xx
+        f = self.N(2.2, seed, 2, stretch=(0.25, 3.0))
+        idx = np.where(f > 0.58, 2, np.where(f < 0.38, 0, 1))
+        self.paint_idx(mask, idx, ramp)
+        lit = mask & ~self.roll(mask, 0, -int(np.sign(self.light[0] - xx.mean()) or 1))
+        self.cv.paint(lit, ramp[-1])
+        rng = np.random.default_rng(seed)
+        ys, xs = np.nonzero(mask & self.cv._erode(self.cv._erode(mask)))
+        for i in rng.choice(len(ys), min(knots, len(ys)), replace=False) if len(ys) else []:
+            k = self.cv.ellipse_mask(xs[i], ys[i], 1.5, 2.2) & mask
+            self.cv.paint(k, ramp[0]); self.cv.paint(k & ~self.roll(k, 1, 0), ramp[-1])
+
+    def foliage(self, mask, ramp, leaf=3, seed=0):
+        """Leaf masses from clusters: each cluster a disc of `leaf` px, darker at its
+        bottom-away side, lit edge toward the light, gaps between clusters dark."""
+        rng = np.random.default_rng(seed)
+        yy, xx = self.yy, self.xx
+        ys, xs = np.nonzero(mask)
+        self.cv.paint(mask, ramp[0])
+        if not len(ys):
+            return
+        lx, ly = self.light
+        for i in rng.choice(len(ys), max(1, len(ys) // (leaf * leaf)), replace=False):
+            cx, cy = xs[i], ys[i]
+            m = (np.hypot(xx - cx, (yy - cy) * 1.2) <= leaf) & mask
+            self.cv.paint(m, ramp[1])
+            dx, dy = np.sign(lx - cx), np.sign(ly - cy)
+            lit = m & ~self.roll(m, -int(dy), -int(dx))
+            self.cv.paint(lit, ramp[2])
+            self.cv.paint(lit & (rng.random() > 0.5), ramp[-1])
+
+    # ---------------------------------------------------------- water
+    def wet(self, mask, ramp, x, width=3, seed=0):
+        """Dark wet streaks on rock next to a waterfall, with a few glints."""
+        m = mask & (np.abs(self.xx - x) < width) & (self.N(1.5, seed, 1, stretch=(0.3, 4)) > 0.45)
+        self.cv.paint(m, ramp[0])
+        self.cv.paint(m & (self.B < 0.08), ramp[-1])
+        return m
+
+    def foam_line(self, water, solid, ramp, seed=0):
+        """Where water meets rock: a broken pale line on the water side (lapping)."""
+        edge = water & ndimage.binary_dilation(solid, iterations=1) & ~solid
+        brk = edge & (self.N(1.2, seed, 1) > 0.45)
+        self.cv.paint(brk, ramp[-1])
+        self.cv.paint(water & ndimage.binary_dilation(brk, iterations=1) & ~brk & ~solid & (self.B < 0.4), ramp[-2])
+        return brk
+
+    # ---------------------------------------------------------- shadows
+    def cast_shadow(self, light_xy, occluder, receiver, radius, strength=0.55, steps=40, soft=True):
+        """Shadows cast by `occluder` from a point light onto `receiver` pixels within
+        `radius`: march from each receiver pixel toward the light; if it hits the
+        occluder first, darken it (softer with distance from the occluder)."""
+        lx, ly = light_xy
+        yy, xx = self.yy, self.xx
+        zone = receiver & (np.hypot(xx - lx, yy - ly) < radius) & ~occluder
+        ys, xs = np.nonzero(zone)
+        if not len(ys):
+            return np.zeros_like(receiver)
+        dx, dy = lx - xs, ly - ys
+        dist = np.hypot(dx, dy) + 1e-6
+        hit = np.zeros(len(ys), float)
+        for k in range(1, steps + 1):
+            t = k / steps
+            px = np.clip(np.round(xs + dx * t).astype(int), 0, self.W - 1)
+            py = np.clip(np.round(ys + dy * t).astype(int), 0, self.H - 1)
+            h = occluder[py, px] & (hit == 0)
+            hit[h] = t
+        sh = hit > 0
+        k = strength * (1 - 0.5 * hit[sh] if soft else 1)
+        self.cv.rgb[ys[sh], xs[sh]] *= (1 - k)[:, None]
+        out = np.zeros_like(receiver)
+        out[ys[sh], xs[sh]] = True
+        return out

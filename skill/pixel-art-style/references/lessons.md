@@ -48,3 +48,16 @@ Format: piece — what happened → the rule. Promote rules that repeat into SKI
   the spill, animate the core flicker only (glow strength ≈0.03).
 - artifact_check — dither checkerboards were reported as jaggies → a jaggy needs a
   straight run (2 equal neighbours on each side).
+- moon lake v5 — user: far ruins "ни к селу ни к городу" → remove props with no
+  story reason or support; every prop must belong to the place.
+- v5 — user: right fall flowed "from the trees" → falls start at a lip or a cave mouth
+  in the rock face, below the forest; never a see-through notch at a slope edge.
+- v5 — user: rock and mushrooms "pretended to be liquid" → the water effect's mask is
+  water minus every solid (rock, props, plants, boat, pads), dilated by 1 px.
+- v5 — mushroom glow pools animated on rock read as liquid → no animated light pools
+  on textured surfaces; pulse the emitter only.
+- v5 — the new rock texture vanished in the vignette → lift the foreground ramp one
+  step and ease the vignette when detail is the point.
+- v5 — user: more texture/shadow on every object → Nature kit: rock strata + cracks,
+  moss, pebbles, grass, bark with knots, boulders at the waterline, foam lines,
+  planks/oar on the boat, lily veins, cast shadows from the lantern.

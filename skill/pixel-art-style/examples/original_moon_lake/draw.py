@@ -1,4 +1,4 @@
-"""'Moon Lake' v4 (castle built with the detailing kit, grid x3) — from v3 — cinematic version: a great castle on the island (curtain walls,
+"""'Moon Lake' v5 — every object detailed (rock strata, moss, bark, grass, boulders, foam, cast shadows), ruins removed, falls from real ravines — from v4/v3 — cinematic version: a great castle on the island (curtain walls,
 five towers, a great hall, a gatehouse), mountains receding in hazy layers, every
 object standing on real ground (placed from the ground mask, with contact shadows),
 deep shadows, a vignette and moon rays.
@@ -14,7 +14,7 @@ from fx import tile_noise
 S = 3
 W, H = 384 * S, 216 * S
 OUT_SCALE = 1
-os.makedirs('stage4', exist_ok=True)
+os.makedirs('stage5', exist_ok=True)
 
 PAL = [
     '#050410', '#0b0918', '#110e24', '#181431', '#211b40', '#2c2452', '#3a2f63', '#4b3d75', '#5e4d86',
@@ -178,16 +178,6 @@ snow &= yy < (np.where(far1, yy, H).min(0)[None, :] + 14 * S)         # only nea
 crag(snow, ['#5a5290', '#6a62a0', '#8e86c0'], scale=6, seed=32, rough=0.5)
 cv.paint(far1 & ~roll(far1, 1, 0), '#8e86c0')
 haze(far1, '#4b3d75', 96, 128, k=0.75)
-# ruins on the far peak, standing on its ridge
-rx = 60
-gy_ = ground_y(far1, rx)
-if gy_ is not None:
-    base = gy_ / S + 1.5
-    ruin = rect(rx - 7, base - 8, rx - 5, base) | rect(rx - 2, base - 13, rx + 1, base) | rect(rx + 4, base - 6, rx + 6, base) \
-        | rect(rx - 8, base - 2, rx + 8, base + 1) | poly([(rx - 2, base - 13), (rx + 1, base - 13), (rx - 0.5, base - 18)])
-    cv.paint(ruin, '#2f2a58')
-    cv.paint(rect(rx - 1, base - 10, rx, base - 8), '#c8642a')
-    emissive |= rect(rx - 1, base - 10, rx, base - 8)
 # mid: darker, closer, forested slopes
 mid = ridge(140, 24, 7, peaks=[(110, 8), (380, 10)])
 crag(mid, ['#17142e', '#1e1a3a', '#262248', '#2f2a58'], scale=9, seed=33, rough=0.6)
@@ -220,14 +210,14 @@ def pine(x, yb, h, col='#0c1418', lit='#1a2e32', shade='#05080b', rim_ok=True):
     return m
 
 
-def forest_on(ground, x0, x1, hmin, hmax, seed, col='#0c1418', lit='#1a2e32', gap=(2.5, 5.5), rim_ok=True, sink=1.0):
+def forest_on(ground, x0, x1, hmin, hmax, seed, col='#0c1418', lit='#1a2e32', gap=(2.5, 5.5), rim_ok=True, sink=1.0, avoid=()):
     """Plant pines along the TOP SURFACE of a ground mask (never in the air)."""
     r = np.random.default_rng(seed)
     out = np.zeros((H, W), bool)
     x = x0
     while x < x1:
         gy = ground_y(ground, x)
-        if gy is not None:
+        if gy is not None and not any(a0 <= x <= a1 for a0, a1 in avoid):
             yb = gy + sink * S
             h = r.uniform(hmin, hmax) * S
             out |= pine(x * S, yb, h, col, lit, rim_ok=rim_ok)
@@ -238,27 +228,48 @@ def forest_on(ground, x0, x1, hmin, hmax, seed, col='#0c1418', lit='#1a2e32', ga
 forest_mid = forest_on(mid, 0, 384, 3, 6, 50, col='#17142e', lit='#211b40', gap=(1.5, 3.2), rim_ok=False, sink=2.0)
 forest_shore = forest_on(shore, 100, 330, 5, 11, 51, col='#0c1418', lit='#122026', gap=(2.0, 4.0))
 
-# ================= 3. NEAR CLIFFS + FALLS =================
+# ================= 3. NEAR CLIFFS + FALLS (from ravines) =================
+from objects import Nature
+nat = Nature(cv, light=(MX, MY))
+ROCK = ['#050410', '#070611', '#0a0817', '#100d22', '#17142e', '#1e1a3a', '#2f2a58']
+MOSS = ['#05080b', '#0c1418', '#122026', '#24403f']
+LAKE = 156 * S
 cliff_l = poly([(0, 100), (22, 94), (44, 98), (70, 108), (94, 114), (106, 128), (110, 158), (0, 158)])
 cliff_r = poly([(384, 92), (366, 96), (352, 102), (340, 114), (334, 128), (331, 158), (384, 158)])
+# the right stream cuts a ravine into the cliff top; the fall leaves from its rock lip
+# the right fall springs from a cave in the cliff face (well below the forested top)
 for m, sd in ((cliff_l, 21), (cliff_r, 22)):
-    crag(m, ['#070611', '#0a0817', '#100d22', '#17142e', '#1e1a3a'], scale=7, seed=sd, rough=0.9)
-    cv.paint(m & ~roll(m, 1, 0), '#3d3363')
+    nat.rock(m, ROCK, scale=10 * S, seed=sd, rough=0.9, tilt=0.2)
+    nat.moss(m, MOSS, amount=0.55, seed=sd + 5, depth=3 * S)
 forest_l = forest_on(cliff_l, 0, 100, 10, 22, 4, col='#0c1418', lit='#24403f', gap=(2.6, 5.0))
-forest_r = forest_on(cliff_r, 338, 384, 12, 24, 5, col='#0c1418', lit='#24403f', gap=(2.6, 5.0))
+forest_r = forest_on(cliff_r, 338, 384, 12, 24, 5, col='#0c1418', lit='#24403f', gap=(2.6, 5.0), avoid=[(334, 360)])
 falls = []
-for fx_, w0, w1 in [(103, 5, 9), (348, 5, 9)]:
+for fx_, w0, w1, src_top in [(80, 4, 8, 124), (362, 4, 8, 119)]:      # both spring from caves in the rock face
     cliff = cliff_l if fx_ < 200 else cliff_r
-    top = ground_y(cliff, fx_) / S + 1                 # the fall leaves from the cliff's own edge
+    top = src_top if src_top else ground_y(cliff, fx_) / S + 1
+    if src_top:                                                   # cave mouth the water comes out of
+        cave = cv.ellipse_mask(fx_ * S, (top - 1.5) * S, 5 * S, 3.2 * S) & cliff
+        d_in = ndimage.distance_transform_edt(cave)
+        nat.paint_idx(cave, np.where(d_in > 1.5 * S, 0, 1), ROCK)
+        cv.paint(cave & ~roll(cave, 1, 0), ROCK[5])                 # lit brow of the cave
+        cv.paint(ndimage.binary_dilation(cave, iterations=S) & ~cave & cliff & (yy < (top - 3) * S), ROCK[4])
     fm = poly([(fx_ - w0 / 2, top), (fx_ + w0 / 2, top), (fx_ + w1 / 2, 156), (fx_ - w1 / 2, 156)])
-    st = N(2, fx_, 2, stretch=(0.35, 5))
+    st = N(2, int(fx_), 2, stretch=(0.35, 5))
     cv.paint(fm, '#6b6496')
     cv.paint(fm & (st > 0.45), '#8a83b3')
     cv.paint(fm & (st > 0.6), '#a9a2cc')
     cv.paint(fm & (st > 0.72), '#d6cde6')
     cv.paint(fm & (~roll(fm, 0, 1) | ~roll(fm, 0, -1)), '#574a80')
-    cv.paint(fm & (yy < (top + 2) * S), '#d6cde6')
-    foam = cv.ellipse_mask(fx_ * S, 156 * S, w1 * S, 3 * S) & (N(1, fx_ + 1) > 0.4)
+    lipz = fm & (yy < (top + 2.5) * S)
+    cv.paint(lipz & (st > 0.4), '#d6cde6')                              # ragged bright lip, not a bar
+    # rock lip at the top: two stones the water pours between
+    for side in (-1, 1):
+        lip = cv.ellipse_mask((fx_ + side * (w0 / 2 + 1.6)) * S, (top + 0.5) * S, 2.0 * S, 1.4 * S) & ~fm
+        nat.paint_idx(lip, np.where(yy < (top + 0.2) * S, 5, 3), ROCK)
+    # wet dark rock beside the fall
+    nat.wet(cliff & ~fm, ['#050410', '#5e4d86'], fx_ * S - (w1 / 2 + 1.5) * S * 1, width=1.6 * S, seed=int(fx_))
+    nat.wet(cliff & ~fm, ['#050410', '#5e4d86'], fx_ * S + (w1 / 2 + 1.5) * S * 1, width=1.6 * S, seed=int(fx_) + 1)
+    foam = cv.ellipse_mask(fx_ * S, 156 * S, w1 * S, 3 * S) & (N(1, int(fx_) + 1) > 0.4)
     cv.paint(foam, '#a9a2cc')
     cv.paint(foam & (B < 0.3), '#d6cde6')
     fm_all = fm | foam
@@ -278,13 +289,18 @@ cv.paint(lake & (rip > 0.66), '#1a1636')
 cv.paint(lake & (rip > 0.76), '#241f48')
 cv.paint(lake & (rip < 0.3), '#0c0a1e')
 cv.paint((yy >= LAKE) & (yy < LAKE + S) & ~(cliff_l | cliff_r), '#2c2452')
+waterline = (yy >= LAKE)
+stones = nat.boulders(waterline, 62, 112, ROCK, count=8, rmin=2 * S, rmax=4.5 * S, seed=81, below=-1)
+stones |= nat.boulders(waterline, 326, 384, ROCK, count=9, rmin=2 * S, rmax=5 * S, seed=82, below=-1)
+stones &= ~ndimage.binary_dilation(falls[0] | falls[1], iterations=S)
 
 # ================= 5. THE CASTLE (detailing kit) =================
 from objects import Kit
 AX = 160 * S
 island = poly([(166, 160), (174, 151), (186, 144), (204, 139), (232, 136), (270, 135), (296, 139), (312, 146),
                (322, 154), (326, 160)])
-crag(island, ['#070611', '#0a0817', '#100d22', '#17142e'], scale=5, seed=60, rough=0.8)
+nat.rock(island, ROCK[:6], scale=6 * S, seed=60, rough=0.8, tilt=-0.15)
+nat.moss(island, MOSS, amount=0.6, seed=61, depth=2 * S)
 cv.paint(island & ~roll(island, 1, 0), '#2f2a58')
 kit = Kit(cv, light=(MX, MY - 40 * S))
 STONE = ['#070611', '#100d22', '#17142e', '#1e1a3a', '#2f2a58', '#3a3468']
@@ -475,15 +491,13 @@ cv.paint(lrefl & lake & (rip > 0.6), '#f09a3e')
 
 # ================= 7. FOREGROUND =================
 ledge = poly([(0, 170), (18, 165), (40, 167), (66, 163), (92, 169), (118, 177), (140, 189), (152, 216), (0, 216)])
-crag(ledge, ['#050410', '#070611', '#0f0d18', '#15121f'], scale=9, seed=70, rough=0.7)
-seam = ledge & (np.abs(N(8, 71, 2) - 0.5) < 0.018)
-cv.paint(seam, '#050410')
-cv.paint(ledge & roll(seam, 1, 0) & ~seam, '#211c2e')
+LROCK = ['#070611', '#0f0d18', '#15121f', '#211c2e', '#2f2840', '#40375a', '#574c74']
+nat.rock(ledge, LROCK, scale=9 * S, seed=70, rough=0.8, tilt=0.12)
 top = ledge & ~roll(ledge, 1, 0)
-cv.paint(top | (ledge & ~roll(ledge, 2 * S, 0) & (xx > 30 * S)), '#2f2840')
 cv.paint(top & (xx > 60 * S), '#574c74')
-moss_top = ledge & ~roll(ledge, 4 * S, 0) & (N(1.2, 73) > 0.45)
-cv.paint(moss_top, '#0c1418'); cv.paint(moss_top & ~roll(moss_top, 1, 0), '#24403f')
+nat.moss(ledge, MOSS + ['#35584f'], amount=0.7, seed=73, depth=5 * S)
+nat.pebbles(ledge & ~roll(ledge, 6 * S, 0), LROCK[2:], density=0.0025, seed=74)
+grass = nat.grass_tufts(ledge, 2 * S, 150 * S, ['#05080b', '#0c1418', '#1a2e32', '#35584f'], count=26, hmin=3 * S, hmax=7 * S, seed=75)
 
 # the twisted tree, rooted in the ledge
 tree = np.zeros((H, W), bool)
@@ -516,8 +530,7 @@ branch(TX + 1, TY - 22, -0.55, 48, 3, 3, 8)
 branch(TX - 1, TY - 14, -2.5, 26, 2.2, 2, 9)
 tree |= poly([(TX - 8, TY), (TX + 9, TY), (TX + 14, TY + 3), (TX - 13, TY + 3)]) & ledge   # root flare on the rock
 tree &= yy < H
-cv.paint(tree, '#050410')
-cv.paint(tree & (N(0.8, 95, 2, stretch=(0.3, 2.5)) > 0.6), '#0f0d18')
+nat.bark(tree, ['#050410', '#0a0817', '#15121f', '#2f2840'], seed=95, knots=6)
 cv.paint(tree & ~roll(tree, 0, -1), '#15121f')
 cv.paint(tree & ~roll(tree, 0, -1) & (dist < 200 * S), '#2f2840')     # moon-side rim
 moss = np.zeros((H, W), bool)
@@ -585,6 +598,12 @@ boat = hull | rect(BX + 7, BY - 9, BX + 8, BY) | rect(BX + 4, BY - 10, BX + 8, B
 cv.paint(boat, '#1c110d')
 cv.paint(hull & ~roll(hull, 1, 0), '#3d281c')
 cv.paint(hull & ((yy // S) % 2 == 1) & (yy > BY * S + S), '#2a1a14')
+kit_planks = Kit(cv, light=(MX, MY))
+kit_planks.planks(hull & (yy > BY * S), ['#1c110d', '#2a1a14', '#3d281c', '#55382a'], ph=S + 1, seed=3)
+cv.paint(hull & ~roll(hull, 1, 0), '#55382a')                                   # gunwale
+oar = cv.line_mask([((BX - 8) * S, (BY - 1) * S), ((BX - 17) * S, (BY + 5) * S)], 1)
+cv.paint(oar & ~hull, '#2a1a14')
+boat_oar = oar
 cv.paint(boat_lamp, '#ffc86a')
 emissive |= boat_lamp
 boat_refl = np.zeros((H, W), bool)
@@ -592,6 +611,7 @@ for y in range(int((BY + 4) * S), min(H, int((BY + 15) * S))):
     sy = 2 * (BY + 4) * S - y
     if 0 <= sy < H:
         boat_refl[y] = (boat | boat_lamp)[sy] & (rip[y] > 0.35)
+boat |= boat_oar
 cv.paint(boat_refl & ~boat, '#070611')
 lamp_refl = np.zeros((H, W), bool)
 for y in range(int((BY + 5) * S), int((BY + 16) * S), 2):
@@ -617,6 +637,7 @@ while tries < 40:
 cv.paint(pads, '#122026')
 cv.paint(pads & ~roll(pads, 1, 0), '#35584f')
 cv.paint(pads & ~roll(pads, -1, 0), '#05080b')
+cv.paint(pads & (np.abs(N(0.5, 22, 1) - 0.5) < 0.04), '#0c1418')            # veins
 cv.paint(teal_flowers, '#5fd4c8')
 emissive |= teal_flowers
 # reeds growing out of the water at the right edge
@@ -630,6 +651,14 @@ reeds |= heads
 cv.paint(reeds, '#05080b')
 cv.paint(reeds & ~roll(reeds, 0, 1), '#122026')
 cv.paint(heads, '#1c110d'); cv.paint(heads & ~roll(heads, 0, 1), '#3d281c')
+
+# ================= 7b. CAST SHADOWS + WATER MASK =================
+occl = tree | (lan & ~cage) | grass
+nat.cast_shadow(flame_base, occl, ledge & ~occl, 70 * S, strength=0.55)
+solid = (ledge | tree | reeds | boat | pads | teal_flowers | mush_caps | lan | island | castle | bridge | falls[0] | falls[1]
+         | cliff_l | cliff_r | stones | steps | dock | ferns | grass | moss)
+water = lake & ~ndimage.binary_dilation(solid, iterations=1)
+nat.foam_line(water, cliff_l | cliff_r | island | stones | ledge, ['#211b40', '#3d3363', '#7d6fa3'], seed=90)
 
 # ================= 8. LIGHT, SHADOW, CINEMA =================
 cv.lit_colors('#f09a3e', steps=(0.1, 0.22, 0.38))
@@ -647,7 +676,7 @@ cv.glow(34 * S, 170 * S, 16 * S, '#5fd4c8', strength=0.2, dither=0.0, squash=0.6
 cv.glow(251 * S, 41 * S, 9 * S, '#5fd4c8', strength=0.3, dither=0.0)
 # vignette + darkened lower frame: cinematic falloff, lights stay bright
 vx = (xx - W / 2) / (W / 2); vy = (yy - H * 0.42) / (H * 0.62)
-vig = np.clip(1 - 0.5 * (vx ** 2 + vy ** 2) ** 1.3, 0.45, 1)
+vig = np.clip(1 - 0.45 * (vx ** 2 + vy ** 2) ** 1.3, 0.55, 1)
 vig = vig * np.clip(1 - np.clip((yy - 190 * S) / (26 * S), 0, 1) * 0.25, 0, 1)
 dark = ~emissive & ~ndimage.binary_dilation(emissive, iterations=S)
 cv.rgb[dark] *= vig[dark][:, None]
@@ -659,15 +688,15 @@ stars_zone = (yy < 100 * S) & ~castle & ~cl
 protect = ndimage.binary_dilation(emissive, iterations=1) | stars_zone
 art = clean(art, protect=protect, passes=2)
 cv.rgb = art.astype(float)
-cv.save('stage4/still', scale=OUT_SCALE)
-img = Image.open('stage4/still_native.png')
-img.save('stage4/native.png')
-img.resize((W * OUT_SCALE, H * OUT_SCALE), Image.NEAREST).save('stage4/big.png')
-np.savez_compressed('stage4/masks.npz', falls0=falls[0], falls1=falls[1], lake=lake, moon_path=moon_path,
+cv.save('stage5/still', scale=OUT_SCALE)
+img = Image.open('stage5/still_native.png')
+img.save('stage5/native.png')
+img.resize((W * OUT_SCALE, H * OUT_SCALE), Image.NEAREST).save('stage5/big.png')
+np.savez_compressed('stage5/masks.npz', falls0=falls[0], falls1=falls[1], lake=lake, moon_path=moon_path,
                     wins=wins & ~teal_win, wins_teal=teal_win, lamps=lamps | boat_lamp, lrefl=lrefl | lamp_refl,
                     moss=moss, reeds=reeds, tree=tree, cloud=cl, moon=moon, mush=mush_caps, teal_flowers=teal_flowers,
-                    ferns=ferns, boat=boat | boat_refl, ledge=ledge, castle=castle, island=island | steps | dock,
+                    ferns=ferns, boat=boat | boat_refl, ledge=ledge, castle=castle, island=island | steps | dock, water=water, solid=solid, grass=grass,
                     banner0=banners[0][0], emb0=banners[0][1], banner1=banners[1][0], emb1=banners[1][1],
                     flames=np.array(flame_pts), chimneys=np.array(chimneys), pennants=np.array(pennants))
-np.save('stage4/flame.npy', np.array(flame_base))
+np.save('stage5/flame.npy', np.array(flame_base))
 print('ok', W, H)

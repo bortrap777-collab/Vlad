@@ -9,14 +9,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from location import Location
 import fx
 
-M = np.load('stage4/masks.npz')
-FX, FY = np.load('stage4/flame.npy')
-L = Location('stage4/big.png', grid=1, unit=3, N=24, n_colors=240, grade_k=0.0, sharpen=0.0, denoise=False)
+M = np.load('stage5/masks.npz')
+FX, FY = np.load('stage5/flame.npy')
+L = Location('stage5/big.png', grid=1, unit=3, N=24, n_colors=240, grade_k=0.0, sharpen=0.0, denoise=False)
 hue, Lt, S, box, yy, xx, u = L.hue, L.L, L.S, L.box, L.yy, L.xx, L.u
 
-lake = M['lake'] & ~M['boat'] & (yy > 157 * u)
+lake = M['water'] & (yy > 157 * u)            # real water only: rock, mushrooms, reeds, boat, pads stay solid
 moon_path = M['moon_path'] & lake
-mist = np.clip(1 - np.abs(yy / u - 152) / 12, 0, 1) * ~M['tree'] * ~M['ledge'] * ~M['castle']   # over water and far shore only
+mist = np.clip(1 - np.abs(yy / u - 152) / 12, 0, 1) * ~M['solid']   # over open water and the far shore only
 MX, MY = 252 * u, 58 * u
 stars = (yy < 100 * u) & (Lt > 0.72) & (np.hypot(xx - MX, yy - MY) > 80 * u) & ~M['cloud']
 star_px = np.argwhere(stars)
@@ -53,7 +53,7 @@ L.add(fx.Breathe(np.clip(1 - np.hypot(xx - MX, yy - MY) / (110 * u), 0, 1) ** 2 
       fx.Mist(mist, col=(140, 132, 186), alpha=0.3, scale=22 * u, stretch=4.0, drift=12 * u, seed=5, dither=True, thresh=0.52, gain=3.0),
       fx.Lights(M['wins'] | M['lrefl'], color=(255, 170, 80), radius=0.9, strength=0.035, core_amp=0.3, seed=6, max_r=8 * u),   # the still holds the spill; a strong pool speckles the masonry
       fx.Lights(M['lamps'], color=(255, 190, 100), radius=1.3, strength=0.18, core_amp=0.3, seed=7, max_r=10 * u),
-      fx.Lights(teal, color=(95, 212, 200), radius=1.4, strength=0.16, core_amp=0.35, seed=13, max_r=12 * u, big_amp=0.6),
+      fx.Lights(teal, color=(95, 212, 200), radius=1.4, strength=0.0, core_amp=0.15, seed=13, max_r=12 * u, big_amp=0.6),   # no animated pools on the rock: they read as liquid
       # a small flame inside the lantern's cage; the stone cage itself stays untouched
       fx.Flame(FX, FY, 5 * u, 3 * u, mask=None, seed=8, tongues=1, tongue=False,
                glow_r=26 * u, glow_k=0.1, glow_col=(255, 150, 70)),   # the still already holds the light pool; this only breathes
@@ -61,6 +61,7 @@ L.add(fx.Breathe(np.clip(1 - np.hypot(xx - MX, yy - MY) / (110 * u), 0, 1) ** 2 
       fx.Sway(M['moss'], amp=1.2 * u, wavelength=60 * u, cycles=1, piece=3 * u, seed=9, min_px=4, root='top'),
       fx.Sway(M['reeds'], amp=1.4 * u, wavelength=50 * u, cycles=1, piece=4 * u, seed=10, min_px=6),
       fx.Sway(M['ferns'], amp=0.8 * u, wavelength=50 * u, cycles=1, piece=5 * u, seed=11, min_px=4),
+      fx.Sway(M['grass'], amp=0.8 * u, wavelength=40 * u, cycles=1, piece=3 * u, seed=15, min_px=3),
       fx.Custom(twinkle, layer=4),
       fx.Particles('firefly', (110, 150, 330, 210), count=14, seed=11, cols=wisp_cols),
       fx.Particles('firefly', (10, 140, 140, 185), count=8, seed=12, cols=wisp_cols),
@@ -95,4 +96,4 @@ def flutter(img, f, n, loc):
 L.add(fx.Custom(flutter, layer=31, plate=pen))
 
 if __name__ == '__main__':
-    L.render('out4/moon_lake', ms=100, big=2)
+    L.render('out5/moon_lake', ms=100, big=2)
