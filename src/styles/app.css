@@ -2103,3 +2103,66 @@ button.row:active,
     opacity: 0;
   }
 }
+
+/* ============ Перенос проектов ============ */
+.project-row .icon-btn {
+  margin-left: 0;
+  flex: none;
+}
+.transfer-hint {
+  display: block;
+  line-height: 1.5;
+}
+.transfer-hint svg {
+  display: inline-block;
+  vertical-align: -2px;
+}
+.topbar-action .btn-soft {
+  gap: 6px;
+}
+.open-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 18px;
+  text-align: center;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.open-error > svg {
+  color: var(--danger);
+}
+.open-error .btn-pair {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.update-banner {
+  position: fixed;
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  z-index: 80;
+  max-width: 496px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 10px 30px rgba(20, 10, 60, 0.25);
+  font-size: var(--fs-small);
+  font-weight: 800;
+  animation: toast-in 0.25s var(--ease) both;
+}
+.update-banner span {
+  flex: 1;
+  min-width: 0;
+}
+.update-banner .icon-btn {
+  font-size: 20px;
+  color: var(--text-2);
+}

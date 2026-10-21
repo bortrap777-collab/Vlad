@@ -34,6 +34,12 @@ export function useVideoProject(projectId?: string) {
   const metaRef = useRef<ProjectMeta | null>(null);
   metaRef.current = meta;
   const opened = useRef<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => {
+    opened.current = null;
+    setError(null);
+    setAttempt((a) => a + 1);
+  }, []);
 
   useEffect(
     () => () => {
@@ -105,7 +111,8 @@ export function useVideoProject(projectId?: string) {
         opened.current = projectId;
         await openProject(m);
       } catch (e) {
-        if (!cancelled) setError((e as Error).message);
+        opened.current = null;
+        if (!cancelled) setError((e as Error).message || 'Не удалось открыть проект.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -113,7 +120,7 @@ export function useVideoProject(projectId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [projectId, openProject]);
+  }, [projectId, openProject, attempt]);
 
   /** Первый файл: создаёт проект */
   const importFirst = useCallback(
@@ -156,8 +163,7 @@ export function useVideoProject(projectId?: string) {
           width: info.width,
           height: info.height,
         };
-        const blob = new Blob([file], { type: s.mime });
-        await putMedia(s.id, blob);
+        await putMedia(s.id, file, (v) => ui.setProgress({ label: 'Сохраняю на устройстве…', value: 0.6 + v * 0.38 }));
         const nextSources = [...(metaRef.current?.sources ?? []), s];
         const updated = await updateProject(m.id, { sources: nextSources });
         if (updated) setMeta(updated);
@@ -185,5 +191,5 @@ export function useVideoProject(projectId?: string) {
   /** Исходный файл для экспорта: из памяти, иначе из хранилища */
   const getBlob = useCallback(async (id: string) => blobRef.current.get(id) ?? getMedia(id), []);
 
-  return { meta, sources, initialTimeline, loading, error, importFirst, addSource, saveTimeline, getBlob };
+  return { meta, sources, initialTimeline, loading, error, importFirst, addSource, saveTimeline, getBlob, retry };
 }

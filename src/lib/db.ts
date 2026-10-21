@@ -1,7 +1,10 @@
 /**
  * Локальное хранилище проектов (IndexedDB).
- * Два хранилища: `projects` — лёгкие метаданные (быстрый список),
- * `media` — исходные файлы (Blob), читаются только при открытии проекта.
+ *  - `projects` — лёгкие метаданные (быстрый список);
+ *  - `files` + `chunks` — исходные файлы, разрезанные на куски по 8 МБ (ArrayBuffer).
+ *    Не храним Blob целиком: в Safari/WebKit Blob из IndexedDB после перезапуска
+ *    бывает нечитаем, а ссылки на него не открываются. Обычные байты читаются всегда.
+ *  - `media` — старый формат (этапы 1–4), переносится в куски при первом открытии.
  */
 import type { PhotoEdits } from '../features/photo/pipeline';
 import type { SourceMeta, Timeline } from '../features/video/model';
@@ -34,7 +37,17 @@ export interface ProjectMeta {
 }
 
 const DB_NAME = 'w-studio';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+const CHUNK = 8 * 1024 * 1024;
+
+interface FileRecord {
+  id: string;
+  type: string;
+  size: number;
+  chunks: number;
+  savedAt: number;
+}
+const chunkKey = (id: string, i: number) => `${id}|${String(i).padStart(6, '0')}`;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 export class StorageError extends Error {
@@ -66,6 +79,8 @@ function openDB(): Promise<IDBDatabase> {
         s.createIndex('openedAt', 'openedAt');
       }
       if (!db.objectStoreNames.contains('media')) db.createObjectStore('media');
+      if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('chunks')) db.createObjectStore('chunks');
     };
     req.onsuccess = () => {
       const db = req.result;
@@ -109,37 +124,10 @@ export function getProject(id: string): Promise<ProjectMeta | undefined> {
   return tx<ProjectMeta | undefined>(['projects'], 'readonly', (t) => t.objectStore('projects').get(id));
 }
 
-export async function getMedia(id: string): Promise<Blob> {
-  const blob = await tx<Blob | undefined>(['media'], 'readonly', (t) => t.objectStore('media').get(id));
-  if (!blob) throw new StorageError('Исходный файл проекта не найден. Возможно, браузер очистил данные сайта.');
-  return materialize(blob);
-}
+/* ---------------- файлы проекта ---------------- */
 
-/**
- * Safari/WebKit на iPhone (и встроенные браузеры приложений) не открывает
- * object URL у Blob, прочитанного из IndexedDB: картинка не грузится.
- * Поэтому копируем данные в обычный Blob в памяти.
- */
-function needsMaterialize(): boolean {
-  const ua = navigator.userAgent;
-  const iOS = /iPhone|iPad|iPod/.test(ua) || (ua.includes('Macintosh') && navigator.maxTouchPoints > 1);
-  const desktopSafari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|Firefox|Android/.test(ua);
-  return iOS || desktopSafari;
-}
-
-async function materialize(blob: Blob): Promise<Blob> {
-  // В Chrome/Android ссылки на Blob из IndexedDB работают — не тратим память на копию.
-  if (!needsMaterialize()) return blob;
-  try {
-    const buf = typeof blob.arrayBuffer === 'function' ? await blob.arrayBuffer() : await readWithFileReader(blob);
-    if (!buf.byteLength) throw new Error('empty');
-    return new Blob([buf], { type: blob.type });
-  } catch {
-    throw new StorageError('Не удалось прочитать файл проекта с устройства. Возможно, браузер очистил данные. Откройте файл заново.');
-  }
-}
-
-function readWithFileReader(blob: Blob): Promise<ArrayBuffer> {
+function readBytes(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(r.result as ArrayBuffer);
@@ -148,9 +136,74 @@ function readWithFileReader(blob: Blob): Promise<ArrayBuffer> {
   });
 }
 
-export function createProject(meta: ProjectMeta, media: Blob): Promise<void> {
-  return tx<void>(['projects', 'media'], 'readwrite', (t) => {
-    t.objectStore('media').put(media, meta.id);
+/** Сохранить файл кусками. Метка `files` пишется последней — значит, файл записан целиком. */
+export async function putMedia(id: string, blob: Blob, onProgress?: (v: number) => void): Promise<void> {
+  await deleteMediaData(id);
+  const n = Math.max(1, Math.ceil(blob.size / CHUNK));
+  for (let i = 0; i < n; i++) {
+    let buf: ArrayBuffer;
+    try {
+      buf = await readBytes(blob.slice(i * CHUNK, Math.min(blob.size, (i + 1) * CHUNK)));
+    } catch (e) {
+      throw new StorageError('Не удалось прочитать выбранный файл. Попробуйте выбрать его снова.', e);
+    }
+    await tx<void>(['chunks'], 'readwrite', (t) => {
+      t.objectStore('chunks').put(buf, chunkKey(id, i));
+    });
+    onProgress?.((i + 1) / n);
+  }
+  const rec: FileRecord = { id, type: blob.type, size: blob.size, chunks: n, savedAt: Date.now() };
+  await tx<void>(['files'], 'readwrite', (t) => {
+    t.objectStore('files').put(rec);
+  });
+}
+
+export async function getMedia(id: string): Promise<Blob> {
+  const rec = await tx<FileRecord | undefined>(['files'], 'readonly', (t) => t.objectStore('files').get(id));
+  if (rec) {
+    let blob = new Blob([], { type: rec.type });
+    for (let i = 0; i < rec.chunks; i++) {
+      const buf = await tx<ArrayBuffer | undefined>(['chunks'], 'readonly', (t) => t.objectStore('chunks').get(chunkKey(id, i)));
+      if (!buf) throw new StorageError('Файл проекта повреждён: часть данных пропала. Удалите проект и создайте заново.');
+      // Склеиваем по одному куску — в памяти не бывает двух копий файла
+      blob = new Blob([blob, buf], { type: rec.type });
+    }
+    if (blob.size !== rec.size) throw new StorageError('Файл проекта повреждён: размер не совпадает.');
+    return blob;
+  }
+
+  // Старый формат: Blob целиком в `media`
+  const legacy = await tx<Blob | undefined>(['media'], 'readonly', (t) => t.objectStore('media').get(id));
+  if (!legacy) throw new StorageError('Исходный файл проекта не найден. Возможно, браузер очистил данные сайта.');
+  try {
+    await putMedia(id, legacy);
+  } catch {
+    throw new StorageError('Safari не смог прочитать файл этого старого проекта. Создайте проект заново — новые проекты хранятся надёжнее.');
+  }
+  await tx<void>(['media'], 'readwrite', (t) => {
+    t.objectStore('media').delete(id);
+  }).catch(() => undefined);
+  return getMedia(id);
+}
+
+async function deleteMediaData(id: string): Promise<void> {
+  await tx<void>(['files', 'chunks', 'media'], 'readwrite', (t) => {
+    t.objectStore('files').delete(id);
+    t.objectStore('chunks').delete(IDBKeyRange.bound(`${id}|`, `${id}|~`));
+    t.objectStore('media').delete(id);
+  });
+}
+
+export async function createProject(meta: ProjectMeta, media: Blob, onProgress?: (v: number) => void): Promise<void> {
+  await putMedia(meta.id, media, onProgress);
+  await tx<void>(['projects'], 'readwrite', (t) => {
+    t.objectStore('projects').put(meta);
+  });
+}
+
+/** Записать готовые метаданные (импорт проекта с другого устройства) */
+export function putProject(meta: ProjectMeta): Promise<void> {
+  return tx<void>(['projects'], 'readwrite', (t) => {
     t.objectStore('projects').put(meta);
   });
 }
@@ -168,29 +221,19 @@ export async function updateProject(id: string, patch: Partial<ProjectMeta>): Pr
 export async function deleteProject(id: string): Promise<void> {
   const meta = await getProject(id);
   const mediaIds = new Set([id, ...(meta?.sources ?? []).map((s) => s.id)]);
-  return tx<void>(['projects', 'media'], 'readwrite', (t) => {
+  await tx<void>(['projects'], 'readwrite', (t) => {
     t.objectStore('projects').delete(id);
-    mediaIds.forEach((m) => t.objectStore('media').delete(m));
   });
-}
-
-/** Дополнительный файл проекта (второй клип, музыка) */
-export function putMedia(mediaId: string, blob: Blob): Promise<void> {
-  return tx<void>(['media'], 'readwrite', (t) => {
-    t.objectStore('media').put(blob, mediaId);
-  });
+  for (const m of mediaIds) await deleteMediaData(m);
 }
 
 export function deleteMedia(mediaId: string): Promise<void> {
-  return tx<void>(['media'], 'readwrite', (t) => {
-    t.objectStore('media').delete(mediaId);
-  });
+  return deleteMediaData(mediaId);
 }
 
 export function clearAll(): Promise<void> {
-  return tx<void>(['projects', 'media'], 'readwrite', (t) => {
-    t.objectStore('projects').clear();
-    t.objectStore('media').clear();
+  return tx<void>(['projects', 'media', 'files', 'chunks'], 'readwrite', (t) => {
+    ['projects', 'media', 'files', 'chunks'].forEach((n) => t.objectStore(n).clear());
   });
 }
 

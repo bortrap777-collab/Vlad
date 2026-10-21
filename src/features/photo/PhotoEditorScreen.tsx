@@ -35,7 +35,7 @@ const ADJUST: { key: 'brightness' | 'contrast' | 'saturation' | 'temperature'; l
 export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
   const ui = useUi();
   const nav = useNav();
-  const { meta, blob, url, loading, error, persisted, importFile, patch } = useEditorProject('photo', projectId);
+  const { meta, blob, url, loading, error, persisted, importFile, patch, retry } = useEditorProject('photo', projectId);
   const picker = useFilePicker('image/*', importFile);
   const [panel, setPanel] = useState<Panel>('filters');
   const [edits, setEdits] = useState<PhotoEdits>(DEFAULT_EDITS);
@@ -86,7 +86,7 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
     return (
       <div className="screen screen-fixed">
         <TopBar title="Редактор фото" />
-        <ImportEmpty kind="photo" error={error} onPick={picker.open} hint="JPEG, PNG, HEIC, WebP. Фото с iPhone в HEIC открываются в Safari." />
+        <ImportEmpty kind="photo" error={error} onRetry={projectId ? retry : undefined} onPick={picker.open} hint="JPEG, PNG, HEIC, WebP. Фото с iPhone в HEIC открываются в Safari." />
         {picker.input}
       </div>
     );

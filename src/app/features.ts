@@ -15,7 +15,8 @@ export const FEATURES = {
   // Этап 1 — готово
   navigation: { title: 'Навигация и экраны', stage: 1, status: 'ready', note: 'Главный экран, разделы, жест «назад».' },
   theme: { title: 'Светлая и тёмная тема', stage: 1, status: 'ready', note: 'Автоматически по устройству или вручную.' },
-  projects: { title: 'Локальные проекты', stage: 1, status: 'ready', note: 'Хранятся в IndexedDB на устройстве.' },
+  projects: { title: 'Локальные проекты', stage: 1, status: 'ready', note: 'Хранятся в IndexedDB на устройстве частями по 8 МБ.' },
+  transfer: { title: 'Перенос проекта на другое устройство', stage: 4, status: 'ready', note: 'Файл .zip со всеми исходниками: «Мои проекты» → ⇪, на другом устройстве — «Импорт».' },
   videoImport: { title: 'Импорт и просмотр видео', stage: 1, status: 'ready', note: 'Воспроизведение, перемотка по шкале.' },
   photoImport: { title: 'Импорт фото', stage: 1, status: 'ready', note: 'Фото открывается и сохраняется в проект.' },
   photoPreview: { title: 'Фильтры, коррекция, поворот', stage: 1, status: 'ready', note: 'Изменения видны сразу и сохраняются в проекте.' },
@@ -45,5 +46,5 @@ export const FEATURES = {
 
 export type FeatureId = keyof typeof FEATURES;
 
-export const APP_VERSION = '0.4.0';
+export const APP_VERSION = '0.4.1';
 export const APP_STAGE = 4;

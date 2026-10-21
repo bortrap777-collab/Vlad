@@ -34,6 +34,12 @@ export function useEditorProject(kind: ProjectKind, projectId?: string) {
 
   // Открытие существующего проекта
   const openedId = useRef<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => {
+    openedId.current = null;
+    setError(null);
+    setAttempt((a) => a + 1);
+  }, []);
   useEffect(() => {
     if (!projectId || openedId.current === projectId) return;
     let cancelled = false;
@@ -58,7 +64,7 @@ export function useEditorProject(kind: ProjectKind, projectId?: string) {
     return () => {
       cancelled = true;
     };
-  }, [projectId, attach]);
+  }, [projectId, attach, attempt]);
 
   const importFile = useCallback(
     async (file: File) => {
@@ -97,5 +103,5 @@ export function useEditorProject(kind: ProjectKind, projectId?: string) {
     [meta, persisted, ui],
   );
 
-  return { meta, blob, url, loading, error, persisted, importFile, patch };
+  return { meta, blob, url, loading, error, persisted, importFile, patch, retry };
 }

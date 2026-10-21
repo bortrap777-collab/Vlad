@@ -23,7 +23,18 @@ const inFrame = (() => {
   }
 })();
 if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    // Новая версия установлена. Перезагрузку предлагаем, а не делаем сами — чтобы не прервать монтаж или экспорт.
+    if (hadController) window.dispatchEvent(new Event('ws-update-ready'));
+  });
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(() => undefined);
+    navigator.serviceWorker
+      .register('./sw.js')
+      .then((reg) => {
+        // Проверяем обновления, когда приложение снова открывают
+        document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && reg.update().catch(() => undefined));
+      })
+      .catch(() => undefined);
   });
 }

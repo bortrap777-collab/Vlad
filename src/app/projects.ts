@@ -62,8 +62,7 @@ export async function importMedia(file: File, kind: ProjectKind, report: Report)
 
   report('Сохраняю проект на устройстве…', 0.75);
   try {
-    // Обычный Blob надёжнее хранится в IndexedDB старых Safari, чем File.
-    await createProject(meta, new Blob([file], { type: meta.mime }));
+    await createProject(meta, file.type ? file : new Blob([file], { type: meta.mime }), (v) => report('Сохраняю проект на устройстве…', 0.75 + v * 0.24));
     notifyProjectsChanged();
     report('Готово', 1);
     return { meta, blob: file, saved: true };

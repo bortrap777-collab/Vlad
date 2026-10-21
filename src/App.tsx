@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { NavProvider, useNav, type Route } from './app/nav';
 import { ThemeProvider } from './app/theme';
 import { UiProvider } from './components/ui';
@@ -35,11 +36,33 @@ function Screens() {
   );
 }
 
+function UpdateBanner() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const on = () => setReady(true);
+    window.addEventListener('ws-update-ready', on);
+    return () => window.removeEventListener('ws-update-ready', on);
+  }, []);
+  if (!ready) return null;
+  return (
+    <div className="update-banner" role="status">
+      <span>Доступна новая версия W Studio</span>
+      <button className="btn btn-primary btn-sm" onClick={() => location.reload()}>
+        Обновить
+      </button>
+      <button className="icon-btn icon-btn-sm" aria-label="Позже" onClick={() => setReady(false)}>
+        ×
+      </button>
+    </div>
+  );
+}
+
 export function App() {
   return (
     <ThemeProvider>
       <NavProvider>
         <UiProvider>
+          <UpdateBanner />
           <Screens />
         </UiProvider>
       </NavProvider>

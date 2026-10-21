@@ -106,6 +106,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         <ImportEmpty
           kind="video"
           error={error}
+          onRetry={projectId ? project.retry : undefined}
           onPick={videoPicker.open}
           hint="MP4 и MOV. Видео с iPhone (HEVC) открываются в Safari; в Chrome на Android надёжнее MP4 H.264."
         />
