@@ -1,37 +1,42 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Sheet, TopBar, useFilePicker, useUi } from '../../components/ui';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TopBar, useFilePicker, useUi } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import { useEditorProject } from '../../app/useEditorProject';
 import { deleteMedia, getMedia, newId, putMedia } from '../../lib/db';
 import { loadImage } from '../../lib/media';
-import { formatBytes } from '../../lib/format';
-import { aiAssetsReady, aiManifest, downloadAiAssets, totalSize } from '../../ai/assets';
+import { useHistory } from '../../lib/useHistory';
+import { aiAssetsReady, downloadAiAssets } from '../../ai/assets';
 import { computeMask } from '../../ai/providers/backgroundRemoval';
 import type { AiProgress } from '../../ai/types';
 import { prepareDelivery } from '../../lib/deliver';
 import { ImportEmpty } from '../shared/ImportEmpty';
-import { PhotoView, type BackgroundLayers } from './PhotoView';
+import { PhotoView } from './PhotoView';
 import { BackgroundPanel } from './BackgroundPanel';
+import { LayersPanel } from './LayersPanel';
+import { MaskBrush } from './MaskBrush';
 import { TextSheet } from './TextSheet';
 import { ExportSheet } from './ExportSheet';
 import { ASPECTS, FULL, fitAspect, isFull, rotateCropCW, type AspectId } from './geometry';
-import { blobToDataUrl, needsAlpha, renderPhoto, type PhotoAssets, type RenderResult } from './render';
+import { blobToDataUrl, canvasPixelLimit, composeStack, renderPhoto, stackHasAlpha, type RenderResult } from './render';
+import { DEFAULT_EDITS, PRESETS, blurredBackdrop, editMediaIds, isEdited, normalizeEdits, temperatureLayer, toCssFilter, type CropRect, type PhotoEdits, type TextLayer } from './pipeline';
 import {
-  DEFAULT_EDITS,
-  PRESETS,
-  blurredBackdrop,
-  editMediaIds,
-  isEdited,
-  normalizeEdits,
-  temperatureLayer,
-  toCssFilter,
-  type BackgroundEdit,
-  type CropRect,
-  type PhotoEdits,
-  type TextLayer,
-} from './pipeline';
+  NEUTRAL_ADJUST,
+  addPhoto,
+  backgroundLayer,
+  bgModeOf,
+  duplicateLayer,
+  moveLayer,
+  removeLayer,
+  setBackground,
+  updateLayer,
+  withCutout,
+  type Adjust,
+  type BgMode,
+  type LayerStack,
+  type PhotoLayer,
+} from './layers';
 
-type Panel = 'filters' | 'adjust' | 'text' | 'background';
+type Panel = 'filters' | 'adjust' | 'text' | 'background' | 'layers';
 
 const ADJUST: { key: 'brightness' | 'contrast' | 'saturation' | 'temperature'; label: string }[] = [
   { key: 'brightness', label: 'Яркость' },
@@ -45,27 +50,35 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   const { meta, blob, url, loading, error, persisted, importFile, patch, retry } = useEditorProject('photo', projectId);
   const picker = useFilePicker('image/*', importFile);
   const [panel, setPanel] = useState<Panel>(tool === 'background' ? 'background' : 'filters');
-  const [edits, setEdits] = useState<PhotoEdits>(DEFAULT_EDITS);
+  const hist = useHistory<PhotoEdits>(DEFAULT_EDITS);
+  const edits = hist.state;
   const [activeAdjust, setActiveAdjust] = useState<(typeof ADJUST)[number]['key']>('brightness');
   const [cropping, setCropping] = useState<{ rect: CropRect; aspect: AspectId } | null>(null);
   const [editingText, setEditingText] = useState<string | null>(null);
   const [result, setResult] = useState<RenderResult | null>(null);
   const [mediaFailed, setMediaFailed] = useState(false);
+  const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
+  const [adjustAll, setAdjustAll] = useState(false);
+  const [brushing, setBrushing] = useState<string | null>(null);
   const loadedFor = useRef<string | null>(null);
-  /** Файлы фона, которые есть в правках сейчас (чтобы удалять ненужные) */
-  const liveMedia = useRef<string[]>([]);
 
   useEffect(() => prepareDelivery(), []);
+
+  const srcW = meta?.width ?? 0;
+  const srcH = meta?.height ?? 0;
 
   // Подхватываем сохранённые правки при открытии проекта
   useEffect(() => {
     if (meta && loadedFor.current !== meta.id) {
       loadedFor.current = meta.id;
       setMediaFailed(false);
-      const e = normalizeEdits(meta.photoEdits);
-      liveMedia.current = editMediaIds(e);
-      setEdits(e);
+      const e = normalizeEdits(meta.photoEdits, meta.width ?? 1, meta.height ?? 1);
+      known.current = new Set(editMediaIds(meta.photoEdits));
+      hist.reset(e);
+      const top = e.stack?.layers.find((l) => l.role === 'subject') ?? null;
+      setSelectedLayer(top?.id ?? null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta]);
 
   // Автосохранение правок
@@ -78,55 +91,87 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edits]);
 
-  /* ---------- Фон: маска и картинка фона — отдельные файлы проекта ---------- */
-  const [bgBlobs, setBgBlobs] = useState<PhotoAssets>({});
-  const [layers, setLayers] = useState<BackgroundLayers>({ mask: null, bgImage: null, blur: null });
-  const [modelReady, setModelReady] = useState<boolean | null>(null);
-  const [modelSize, setModelSize] = useState<number | null>(null);
-  const [askDownload, setAskDownload] = useState(false);
-  /** Файлы, ещё не записанные в хранилище (или если хранилище недоступно) */
-  const memBlobs = useRef(new Map<string, Blob>());
-  const bg = edits.background;
+  const set = (p: Partial<PhotoEdits>) => hist.apply((e) => ({ ...e, ...p }));
+  const setLive = (p: Partial<PhotoEdits>, end: boolean) => {
+    hist.live((e) => ({ ...e, ...p }));
+    if (end) hist.endGesture();
+  };
+  const stack = edits.stack;
+  const setStack = (fn: (s: LayerStack | null) => LayerStack | null) => hist.apply((e) => ({ ...e, stack: fn(e.stack) }));
+  const setStackLive = (fn: (s: LayerStack) => LayerStack, end: boolean) => {
+    hist.live((e) => (e.stack ? { ...e, stack: fn(e.stack) } : e));
+    if (end) hist.endGesture();
+  };
 
-  useEffect(() => {
-    aiAssetsReady().then(setModelReady);
-    aiManifest().then((m) => setModelSize(totalSize(m)), () => undefined);
-  }, []);
-
-  const readFile = (id: string) => memBlobs.current.get(id) ?? getMedia(id);
+  /* ---------- Файлы слоёв: изображения, маски, объединённое фото ---------- */
+  const blobs = useRef(new Map<string, Blob>());
+  const [files, setFiles] = useState<Record<string, string>>({});
+  /** Все файлы, появлявшиеся в правках: ненужные удаляются при выходе (отмена должна работать) */
+  const known = useRef(new Set<string>());
+  const mediaIds = editMediaIds(edits);
+  const idsKey = mediaIds.join(',');
 
   useEffect(() => {
     let cancelled = false;
-    const made: string[] = [];
     (async () => {
-      try {
-        const mask = bg ? await readFile(bg.mask) : null;
-        const bgImage = bg?.image ? await readFile(bg.image) : null;
-        if (cancelled) return;
-        const toUrl = (b: Blob | null) => {
-          if (!b) return null;
+      for (const id of mediaIds) {
+        if (blobs.current.has(id) && files[id]) continue;
+        try {
+          const b = blobs.current.get(id) ?? (await getMedia(id));
+          if (cancelled) return;
+          blobs.current.set(id, b);
           const u = URL.createObjectURL(b);
-          made.push(u);
-          return u;
-        };
-        setBgBlobs({ mask, bgImage });
-        setLayers((l) => ({ ...l, mask: toUrl(mask), bgImage: toUrl(bgImage) }));
-      } catch (e) {
-        if (!cancelled) ui.toast(`Файл фона не открылся: ${(e as Error).message}`, 'error');
+          setFiles((f) => ({ ...f, [id]: u }));
+        } catch (e) {
+          if (!cancelled) ui.toast(`Файл слоя не открылся: ${(e as Error).message}`, 'error');
+        }
       }
     })();
     return () => {
       cancelled = true;
-      made.forEach((u) => URL.revokeObjectURL(u));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bg?.mask, bg?.image]);
+  }, [idsKey]);
 
-  // Размытый фон для предпросмотра — той же функцией, что и при сохранении
-  const blurOn = bg?.mode === 'blur';
-  const blurAmount = bg?.blur ?? 0;
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const editsRef = useRef(edits);
+  editsRef.current = edits;
+  useEffect(
+    () => () => {
+      Object.values(filesRef.current).forEach((u) => URL.revokeObjectURL(u));
+      const used = new Set(editMediaIds(editsRef.current));
+      if (persistedRef.current) known.current.forEach((id) => !used.has(id) && deleteMedia(id).catch(() => undefined));
+    },
+    [],
+  );
+  const persistedRef = useRef(persisted);
+  persistedRef.current = persisted;
+
+  const storeFile = async (b: Blob): Promise<string> => {
+    const id = newId();
+    blobs.current.set(id, b);
+    known.current.add(id);
+    if (persisted) await putMedia(id, b);
+    return id;
+  };
+
+  const blobFiles = (): Record<string, Blob> => {
+    const out: Record<string, Blob> = {};
+    for (const id of editMediaIds(edits)) {
+      const b = blobs.current.get(id);
+      if (!b) throw new Error('Файлы слоёв ещё загружаются. Повторите через секунду.');
+      out[id] = b;
+    }
+    return out;
+  };
+
+  // Размытое фото для слоя «размытие» — той же функцией, что и при сохранении
+  const blurLayer = stack?.layers.find((l) => l.kind === 'blur' && l.visible);
+  const blurAmount = blurLayer?.blur ?? null;
+  const [blurUrl, setBlurUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (!blurOn || !url || !srcW) return;
+    if (blurAmount == null || !url || !srcW) return;
     let cancelled = false;
     let made: string | null = null;
     const t = setTimeout(async () => {
@@ -138,9 +183,9 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
         c.width = c.height = 1;
         if (cancelled || !b) return;
         made = URL.createObjectURL(b);
-        setLayers((l) => ({ ...l, blur: made }));
+        setBlurUrl(made);
       } catch {
-        /* без предпросмотра размытия — фон останется прозрачным до сохранения */
+        /* предпросмотр размытия не обязателен */
       }
     }, 120);
     return () => {
@@ -149,51 +194,24 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
       if (made) URL.revokeObjectURL(made);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blurOn, blurAmount, url]);
+  }, [blurAmount, url, srcW]);
 
-  // Файлы фона, на которые правки больше не ссылаются, удаляем из хранилища
-  useEffect(() => {
-    if (!meta || loadedFor.current !== meta.id) return;
-    const now = editMediaIds(edits);
-    const gone = liveMedia.current.filter((id) => !now.includes(id));
-    liveMedia.current = now;
-    if (!gone.length) return;
-    gone.forEach((id) => memBlobs.current.delete(id));
-    if (persisted) setTimeout(() => gone.forEach((id) => deleteMedia(id).catch(() => undefined)), 1500);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edits]);
-
-  const storeFile = async (b: Blob): Promise<string> => {
-    const id = newId();
-    memBlobs.current.set(id, b);
-    if (persisted) {
-      await putMedia(id, b);
-      memBlobs.current.delete(id);
-    }
-    return id;
-  };
-
-  const removeBackground = async (confirmed = false) => {
-    if (!blob) return;
-    const ready = await aiAssetsReady();
-    if (!ready && !confirmed) {
-      setAskDownload(true);
-      return;
-    }
-    setAskDownload(false);
+  /* ---------- Удалить фон: одна кнопка ---------- */
+  const removeBackground = async () => {
+    if (!blob || !srcW) return;
     const ctrl = new AbortController();
     const show = (p: AiProgress) => ui.setProgress({ ...p, onCancel: () => ctrl.abort() });
     try {
-      if (!ready) {
-        show({ value: 0, label: 'Скачиваю модель…' });
+      if (!(await aiAssetsReady())) {
+        show({ value: 0, label: 'Скачиваю модель (один раз)…' });
         await downloadAiAssets(show, ctrl.signal);
-        setModelReady(true);
       }
       const r = await computeMask(blob, show, ctrl.signal);
       const id = await storeFile(r.mask);
-      const next: BackgroundEdit = bg ? { ...bg, mask: id } : { mask: id, mode: 'transparent', color: '#FFFFFF', blur: 0.5, image: null };
-      set({ background: next });
-      ui.toast(`Фон отделён за ${(r.ms / 1000).toFixed(1)} с`, 'ok');
+      const next = withCutout(stack ? { ...stack, merged: null } : null, srcW, srcH, id);
+      hist.apply((e) => ({ ...e, stack: next }));
+      setSelectedLayer(next.layers.find((l) => l.role === 'subject')?.id ?? null);
+      ui.toast(`Фон удалён за ${(r.ms / 1000).toFixed(1)} с. Объект — отдельный слой`, 'ok');
     } catch (e) {
       if ((e as DOMException)?.name !== 'AbortError') ui.toast((e as Error).message || 'Не удалось удалить фон', 'error');
     } finally {
@@ -201,24 +219,69 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     }
   };
 
-  const bgPicker = useFilePicker('image/*', async (file) => {
-    if (!bg) return;
-    ui.setProgress({ label: 'Добавляю фон…', value: null });
+  /** Выбор фото с устройства: для фона или новым слоем */
+  const pickFor = useRef<'background' | 'layer'>('layer');
+  const photoPicker = useFilePicker('image/*', async (file) => {
+    ui.setProgress({ label: 'Добавляю фото…', value: null });
     try {
-      await loadImage(URL.createObjectURL(file)).then((img) => URL.revokeObjectURL(img.src));
+      const u = URL.createObjectURL(file);
+      const img = await loadImage(u).finally(() => URL.revokeObjectURL(u));
       const id = await storeFile(file);
-      setEdits((e) => (e.background ? { ...e, background: { ...e.background, mode: 'image', image: id } } : e));
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (pickFor.current === 'background') setStack((s) => (s ? setBackground(s, srcW, srcH, 'image', { media: id, w, h }) : s));
+      else {
+        const r = addPhoto(stack, srcW, srcH, id, w, h, 'Фото');
+        hist.apply((e) => ({ ...e, stack: r.stack }));
+        setSelectedLayer(r.id);
+        setPanel('layers');
+      }
     } catch (e) {
-      ui.toast((e as Error).message || 'Не удалось открыть фото для фона', 'error');
+      ui.toast((e as Error).message || 'Не удалось открыть фото', 'error');
     } finally {
       ui.setProgress(null);
     }
   });
+  const pickPhoto = (target: 'background' | 'layer') => {
+    pickFor.current = target;
+    photoPicker.open();
+  };
 
-  const set = (p: Partial<PhotoEdits>) => setEdits((e) => ({ ...e, ...p }));
-  const setBg = (p: Partial<BackgroundEdit>) => setEdits((e) => (e.background ? { ...e, background: { ...e.background, ...p } } : e));
-  const srcW = meta?.width ?? 0;
-  const srcH = meta?.height ?? 0;
+  /* ---------- Объединить / разъединить ---------- */
+  const merge = async () => {
+    if (!stack || !url) return;
+    ui.setProgress({ label: 'Объединяю слои…', value: null });
+    try {
+      const img = await loadImage(url);
+      const k = Math.min(1, Math.sqrt(canvasPixelLimit() / (srcW * srcH)));
+      const c = await composeStack(img, { ...stack, merged: null }, blobFiles(), Math.round(srcW * k), Math.round(srcH * k));
+      const alpha = stackHasAlpha({ ...stack, merged: null }, srcW, srcH);
+      const b = await new Promise<Blob | null>((r) => c.toBlob(r, alpha ? 'image/png' : 'image/jpeg', 0.95));
+      const w = c.width;
+      const h = c.height;
+      c.width = c.height = 1;
+      if (!b) throw new Error('Не удалось объединить слои.');
+      const id = await storeFile(b);
+      setStack((s) => (s ? { ...s, merged: { media: id, w, h, alpha } } : s));
+      setAdjustAll(true);
+      ui.toast('Слои объединены. «Разъединить» вернёт их', 'ok');
+    } catch (e) {
+      ui.toast((e as Error).message, 'error');
+    } finally {
+      ui.setProgress(null);
+    }
+  };
+
+  /* ---------- Цветокоррекция: выбранного слоя или всего фото ---------- */
+  const layerMode = !!stack && !stack.merged;
+  const selLayer = layerMode ? stack!.layers.find((l) => l.id === selectedLayer) ?? null : null;
+  const adjTarget: 'layer' | 'all' = selLayer && !adjustAll ? 'layer' : 'all';
+  const adj: Adjust = adjTarget === 'layer' ? selLayer!.adjust : edits;
+  const setAdj = (p: Partial<Adjust>, end = true) => {
+    if (adjTarget === 'layer' && selLayer) setStackLive((s) => updateLayer(s, selLayer.id, { adjust: { ...selLayer.adjust, ...p } }), end);
+    else setLive(p, end);
+  };
+
   const quarter = edits.rotation % 180 !== 0;
   const rw = quarter ? srcH : srcW;
   const rh = quarter ? srcW : srcH;
@@ -231,6 +294,15 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     return (pr * rh) / rw;
   }, [cropping, rw, rh]);
 
+  const onTransform = useCallback(
+    (id: string, p: Pick<PhotoLayer, 'x' | 'y' | 'scale' | 'rotation'>, end: boolean) => {
+      hist.live((e) => (e.stack ? { ...e, stack: updateLayer(e.stack, id, p) } : e));
+      if (end) hist.endGesture();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   if (!meta && !loading) {
     return (
       <div className="screen screen-fixed">
@@ -242,7 +314,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   }
 
   /* ---------- Действия ---------- */
-  const rotate = () => setEdits((e) => ({ ...e, rotation: (e.rotation + 90) % 360, crop: rotateCropCW(e.crop) }));
+  const rotate = () => hist.apply((e) => ({ ...e, rotation: (e.rotation + 90) % 360, crop: rotateCropCW(e.crop) }));
 
   const startCrop = () => {
     setEditingText(null);
@@ -264,15 +336,21 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     set({ texts: [...edits.texts, layer] });
     setEditingText(layer.id);
   };
-  const updateText = (id: string, p: Partial<TextLayer>) =>
-    setEdits((e) => ({ ...e, texts: e.texts.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
+  const updateText = (id: string, p: Partial<TextLayer>, end = true) => {
+    hist.live((e) => ({ ...e, texts: e.texts.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
+    if (end) hist.endGesture();
+  };
   const deleteText = (id: string) => {
-    setEdits((e) => ({ ...e, texts: e.texts.filter((t) => t.id !== id) }));
+    hist.apply((e) => ({ ...e, texts: e.texts.filter((t) => t.id !== id) }));
     setEditingText(null);
   };
   const closeTextEditor = () => {
     // Пустой текст не оставляем
-    setEdits((e) => ({ ...e, texts: e.texts.filter((t) => t.id !== editingText || t.text.trim()) }));
+    hist.apply((e) => {
+      const texts = e.texts.filter((t) => t.id !== editingText || t.text.trim());
+      return texts.length === e.texts.length ? e : { ...e, texts };
+    });
+    hist.endGesture();
     setEditingText(null);
   };
 
@@ -281,12 +359,11 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     ui.setProgress({ label: 'Готовлю фото…', value: 0 });
     try {
       const type = meta.mime === 'image/png' ? 'image/png' : 'image/jpeg';
-      const assets = bgBlobs;
-      if (edits.background && !assets.mask) throw new Error('Маска фона ещё загружается. Повторите через секунду.');
-      const r = await renderPhoto(blob, edits, { type, quality: 0.95, assets, onProgress: (value, label) => ui.setProgress({ value, label }) });
+      const f = blobFiles();
+      const r = await renderPhoto(blob, edits, { type, quality: 0.95, files: f, onProgress: (value, label) => ui.setProgress({ value, label }) });
       // Превью проекта с правками — для «Недавних»
       try {
-        const thumb = await renderPhoto(blob, edits, { maxSide: 320, quality: 0.8, useWorker: false, assets, type: needsAlpha(edits) ? 'image/png' : 'image/jpeg' });
+        const thumb = await renderPhoto(blob, edits, { maxSide: 320, quality: 0.8, useWorker: false, files: f });
         await patch({ photoEdits: edits, thumb: await blobToDataUrl(thumb.blob) });
       } catch {
         await patch({ photoEdits: edits });
@@ -303,231 +380,307 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   const filename = `${(meta?.name ?? 'photo').replace(/[\\/:*?"<>|]+/g, '_')}-wstudio.${outPng ? 'png' : 'jpg'}`;
   const current = ADJUST.find((a) => a.key === activeAdjust)!;
   const editingLayer = edits.texts.find((t) => t.id === editingText) ?? null;
+  const bgLayer = backgroundLayer(stack);
+  const cut = !!stack?.layers.some((l) => l.role === 'subject');
+  const brushLayer = brushing && stack ? stack.layers.find((l) => l.id === brushing) ?? null : null;
+
+  const adjustTargetRow = layerMode && (panel === 'filters' || panel === 'adjust') && (
+    <div className="chip-row chip-row-scroll" role="radiogroup" aria-label="Что менять">
+      <button role="radio" aria-checked={adjTarget === 'layer'} disabled={!selLayer} className={`pill ${adjTarget === 'layer' ? 'is-active' : ''}`} onClick={() => setAdjustAll(false)}>
+        {selLayer ? `Слой «${selLayer.name}»` : 'Слой не выбран'}
+      </button>
+      <button role="radio" aria-checked={adjTarget === 'all'} className={`pill ${adjTarget === 'all' ? 'is-active' : ''}`} onClick={() => setAdjustAll(true)}>
+        Всё фото
+      </button>
+    </div>
+  );
 
   return (
     <div className="screen screen-fixed editor">
       <TopBar
-        title={cropping ? 'Обрезка' : 'Редактор фото'}
-        onBack={cropping ? () => setCropping(null) : undefined}
+        title={cropping ? 'Обрезка' : brushLayer ? 'Кисть и ластик' : 'Редактор фото'}
+        onBack={cropping ? () => setCropping(null) : brushLayer ? () => setBrushing(null) : undefined}
         action={
           cropping ? (
             <button className="btn btn-primary btn-sm" onClick={applyCrop}>
               Готово
             </button>
-          ) : (
-            <button className="btn btn-primary btn-sm" onClick={save} disabled={!blob}>
-              Сохранить
-            </button>
+          ) : brushLayer ? null : (
+            <div className="topbar-group">
+              <button className="icon-btn icon-btn-sm" onClick={hist.undo} disabled={!hist.canUndo} aria-label="Отменить">
+                <Icon name="undo" size={20} />
+              </button>
+              <button className="icon-btn icon-btn-sm" onClick={hist.redo} disabled={!hist.canRedo} aria-label="Повторить">
+                <Icon name="redo" size={20} />
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={save} disabled={!blob}>
+                Сохранить
+              </button>
+            </div>
           )
         }
       />
 
-      <div className="photo-stage">
-        <PhotoView
-          url={url}
-          srcW={srcW}
-          srcH={srcH}
-          edits={edits}
-          loading={loading}
-          crop={cropping ? { rect: cropping.rect, rn: aspectRn, onChange: (rect) => setCropping((c) => (c ? { ...c, rect } : c)) } : null}
-          selectedText={editingText}
-          onTextMove={(id, x, y) => updateText(id, { x, y })}
-          onTextTap={(id) => {
-            setPanel('text');
-            setEditingText(id);
+      {brushLayer && url ? (
+        <MaskBrush
+          layer={brushLayer}
+          srcUrl={url}
+          files={files}
+          blobs={blobs.current}
+          docW={srcW}
+          docH={srcH}
+          onDone={async (maskBlob) => {
+            if (maskBlob) {
+              const id = await storeFile(maskBlob);
+              setStack((s) => (s ? updateLayer(s, brushLayer.id, { mask: id }) : s));
+            }
+            setBrushing(null);
           }}
-          onMediaError={() => setMediaFailed(true)}
-          layers={layers}
         />
-        {(mediaFailed || (error && !loading)) && (
-          <div className="stage-error" role="alert">
-            <Icon name="info" size={22} />
-            <p>{error ?? 'Фото не удалось показать. Браузер не открыл сохранённый файл.'}</p>
-            <button className="btn btn-primary btn-sm" onClick={picker.open}>
-              Выбрать фото заново
-            </button>
-          </div>
-        )}
-        {picker.input}
-        {bgPicker.input}
-      </div>
-
-      {cropping ? (
-        <div className="photo-panel">
-          <div className="chip-row chip-row-scroll" role="radiogroup" aria-label="Пропорции">
-            {ASPECTS.map((a) => (
-              <button key={a.id} role="radio" aria-checked={cropping.aspect === a.id} className={`pill ${cropping.aspect === a.id ? 'is-active' : ''}`} onClick={() => chooseAspect(a.id)}>
-                {a.label}
-              </button>
-            ))}
-          </div>
-          <div className="panel-foot">
-            <button className="link-btn" onClick={() => setCropping({ rect: FULL, aspect: 'free' })}>
-              <Icon name="reset" size={16} /> Сбросить
-            </button>
-            <button
-              className="link-btn"
-              onClick={() => {
-                rotate();
-                setCropping((c) => (c ? { rect: rotateCropCW(c.rect) ?? FULL, aspect: 'free' } : c));
-              }}
-            >
-              <Icon name="rotate" size={16} /> Повернуть
-            </button>
-          </div>
-          <p className="muted small">Тяните за углы или двигайте рамку пальцем.</p>
-        </div>
       ) : (
         <>
-          <nav className="toolbar toolbar-top" aria-label="Инструменты фото">
-            <button className="tool" onClick={startCrop}>
-              <Icon name="crop" size={24} />
-              <span>Обрезать</span>
-            </button>
-            <button className={`tool ${panel === 'filters' ? 'is-active' : ''}`} onClick={() => setPanel('filters')}>
-              <Icon name="filters" size={24} />
-              <span>Фильтры</span>
-            </button>
-            <button className={`tool ${panel === 'adjust' ? 'is-active' : ''}`} onClick={() => setPanel('adjust')}>
-              <Icon name="sliders" size={24} />
-              <span>Настройки</span>
-            </button>
-            <button className="tool" onClick={rotate}>
-              <Icon name="rotate" size={24} />
-              <span>Поворот</span>
-            </button>
-            <button className={`tool ${panel === 'background' ? 'is-active' : ''}`} onClick={() => setPanel('background')}>
-              <Icon name="cutout" size={24} />
-              <span>Фон</span>
-              <i className="tool-dot tool-dot-ai" aria-hidden="true" />
-            </button>
-            <button className={`tool ${panel === 'text' ? 'is-active' : ''}`} onClick={() => setPanel('text')}>
-              <Icon name="text" size={24} />
-              <span>Текст</span>
-            </button>
-          </nav>
-
-          <div className="photo-panel">
-            {panel === 'filters' && (
-              <div className="preset-row" role="listbox" aria-label="Фильтры">
-                {PRESETS.map((p) => {
-                  const t = temperatureLayer({ ...edits, temperature: 0 }, p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      role="option"
-                      aria-selected={edits.preset === p.id}
-                      className={`preset ${edits.preset === p.id ? 'is-active' : ''}`}
-                      onClick={() => set({ preset: p.id })}
-                    >
-                      <span className="preset-img">
-                        {url && <img src={url} alt="" style={{ filter: toCssFilter(DEFAULT_EDITS, p.id) }} draggable={false} />}
-                        {t && <span className="temp-layer" style={{ background: t.color, opacity: t.opacity }} />}
-                      </span>
-                      <span className="preset-name">{p.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {panel === 'adjust' && (
-              <div className="adjust">
-                <div className="adjust-tabs" role="tablist">
-                  {ADJUST.map((a) => (
-                    <button
-                      key={a.key}
-                      role="tab"
-                      aria-selected={activeAdjust === a.key}
-                      className={`adjust-tab ${activeAdjust === a.key ? 'is-active' : ''} ${edits[a.key] !== 0 ? 'is-changed' : ''}`}
-                      onClick={() => setActiveAdjust(a.key)}
-                    >
-                      {a.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="slider-row">
-                  <input
-                    id={`adj-${current.key}`}
-                    className={`slider ${current.key === 'temperature' ? 'slider-temp' : ''}`}
-                    type="range"
-                    min={-100}
-                    max={100}
-                    step={1}
-                    value={edits[current.key]}
-                    onChange={(e) => set({ [current.key]: Number(e.target.value) } as Partial<PhotoEdits>)}
-                    onDoubleClick={() => set({ [current.key]: 0 } as Partial<PhotoEdits>)}
-                    aria-label={current.label}
-                  />
-                  <output className="slider-value" htmlFor={`adj-${current.key}`}>
-                    {edits[current.key] > 0 ? `+${edits[current.key]}` : edits[current.key]}
-                  </output>
-                </div>
-              </div>
-            )}
-
-            {panel === 'background' && (
-              <BackgroundPanel
-                bg={bg}
-                modelReady={modelReady}
-                modelSize={modelSize}
-                onRemove={() => removeBackground()}
-                onChange={setBg}
-                onPickImage={bgPicker.open}
-                onRestore={() => set({ background: null })}
-              />
-            )}
-
-            {panel === 'text' && (
-              <div className="text-panel">
-                <div className="chip-row chip-row-scroll">
-                  <button className="pill pill-add" onClick={addText}>
-                    <Icon name="plus" size={16} stroke={2.6} /> Добавить текст
-                  </button>
-                  {edits.texts.map((t) => (
-                    <button key={t.id} className="pill" onClick={() => setEditingText(t.id)}>
-                      {t.text.split('\n')[0].slice(0, 18) || 'Текст'}
-                    </button>
-                  ))}
-                </div>
-                <p className="muted small">{edits.texts.length ? 'Перетаскивайте текст пальцем, нажмите — чтобы изменить.' : 'Надпись появится в центре фото.'}</p>
-              </div>
-            )}
-
-            <div className="panel-foot">
-              <span className="muted small">{persisted ? 'Правки сохраняются автоматически' : 'Хранилище недоступно — правки не сохранятся'}</span>
-              {isEdited(edits) && (
-                <button className="link-btn" onClick={() => setEdits({ ...DEFAULT_EDITS })}>
-                  <Icon name="reset" size={16} /> Сбросить всё
+          <div className="photo-stage">
+            <PhotoView
+              url={url}
+              srcW={srcW}
+              srcH={srcH}
+              edits={edits}
+              loading={loading}
+              crop={cropping ? { rect: cropping.rect, rn: aspectRn, onChange: (rect) => setCropping((c) => (c ? { ...c, rect } : c)) } : null}
+              selectedText={editingText}
+              onTextMove={(id, x, y) => updateText(id, { x, y }, false)}
+              onTextTap={(id) => {
+                setPanel('text');
+                setEditingText(id);
+              }}
+              onMediaError={() => setMediaFailed(true)}
+              files={files}
+              blurUrl={blurUrl}
+              layerEdit={panel === 'layers' && layerMode ? { selected: selectedLayer, onSelect: setSelectedLayer, onTransform } : null}
+            />
+            {(mediaFailed || (error && !loading)) && (
+              <div className="stage-error" role="alert">
+                <Icon name="info" size={22} />
+                <p>{error ?? 'Фото не удалось показать. Браузер не открыл сохранённый файл.'}</p>
+                <button className="btn btn-primary btn-sm" onClick={picker.open}>
+                  Выбрать фото заново
                 </button>
-              )}
-            </div>
+              </div>
+            )}
+            {picker.input}
+            {photoPicker.input}
           </div>
+
+          {cropping ? (
+            <div className="photo-panel">
+              <div className="chip-row chip-row-scroll" role="radiogroup" aria-label="Пропорции">
+                {ASPECTS.map((a) => (
+                  <button key={a.id} role="radio" aria-checked={cropping.aspect === a.id} className={`pill ${cropping.aspect === a.id ? 'is-active' : ''}`} onClick={() => chooseAspect(a.id)}>
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+              <div className="panel-foot">
+                <button className="link-btn" onClick={() => setCropping({ rect: FULL, aspect: 'free' })}>
+                  <Icon name="reset" size={16} /> Сбросить
+                </button>
+                <button
+                  className="link-btn"
+                  onClick={() => {
+                    rotate();
+                    setCropping((c) => (c ? { rect: rotateCropCW(c.rect) ?? FULL, aspect: 'free' } : c));
+                  }}
+                >
+                  <Icon name="rotate" size={16} /> Повернуть
+                </button>
+              </div>
+              <p className="muted small">Тяните за углы или двигайте рамку пальцем.</p>
+            </div>
+          ) : (
+            <>
+              <nav className="toolbar toolbar-top" aria-label="Инструменты фото">
+                <button className="tool" onClick={startCrop}>
+                  <Icon name="crop" size={24} />
+                  <span>Обрезать</span>
+                </button>
+                <button className={`tool ${panel === 'filters' ? 'is-active' : ''}`} onClick={() => setPanel('filters')}>
+                  <Icon name="filters" size={24} />
+                  <span>Фильтры</span>
+                </button>
+                <button className={`tool ${panel === 'adjust' ? 'is-active' : ''}`} onClick={() => setPanel('adjust')}>
+                  <Icon name="sliders" size={24} />
+                  <span>Настройки</span>
+                </button>
+                <button className="tool" onClick={rotate}>
+                  <Icon name="rotate" size={24} />
+                  <span>Поворот</span>
+                </button>
+                <button className={`tool ${panel === 'background' ? 'is-active' : ''}`} onClick={() => setPanel('background')}>
+                  <Icon name="cutout" size={24} />
+                  <span>Фон</span>
+                  <i className="tool-dot tool-dot-ai" aria-hidden="true" />
+                </button>
+                <button className={`tool ${panel === 'layers' ? 'is-active' : ''}`} onClick={() => setPanel('layers')}>
+                  <Icon name="layers" size={24} />
+                  <span>Слои</span>
+                </button>
+                <button className={`tool ${panel === 'text' ? 'is-active' : ''}`} onClick={() => setPanel('text')}>
+                  <Icon name="text" size={24} />
+                  <span>Текст</span>
+                </button>
+              </nav>
+
+              <div className="photo-panel">
+                {adjustTargetRow}
+
+                {panel === 'filters' && (
+                  <div className="preset-row" role="listbox" aria-label="Фильтры">
+                    {PRESETS.map((p) => {
+                      const t = temperatureLayer(NEUTRAL_ADJUST, p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          role="option"
+                          aria-selected={adj.preset === p.id}
+                          className={`preset ${adj.preset === p.id ? 'is-active' : ''}`}
+                          onClick={() => setAdj({ preset: p.id })}
+                        >
+                          <span className="preset-img">
+                            {url && <img src={url} alt="" style={{ filter: toCssFilter(DEFAULT_EDITS, p.id) }} draggable={false} />}
+                            {t && <span className="temp-layer" style={{ background: t.color, opacity: t.opacity }} />}
+                          </span>
+                          <span className="preset-name">{p.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {panel === 'adjust' && (
+                  <div className="adjust">
+                    <div className="adjust-tabs" role="tablist">
+                      {ADJUST.map((a) => (
+                        <button
+                          key={a.key}
+                          role="tab"
+                          aria-selected={activeAdjust === a.key}
+                          className={`adjust-tab ${activeAdjust === a.key ? 'is-active' : ''} ${adj[a.key] !== 0 ? 'is-changed' : ''}`}
+                          onClick={() => setActiveAdjust(a.key)}
+                        >
+                          {a.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="slider-row">
+                      <input
+                        id={`adj-${current.key}`}
+                        className={`slider ${current.key === 'temperature' ? 'slider-temp' : ''}`}
+                        type="range"
+                        min={-100}
+                        max={100}
+                        step={1}
+                        value={adj[current.key]}
+                        onChange={(e) => setAdj({ [current.key]: Number(e.target.value) }, false)}
+                        onPointerUp={() => hist.endGesture()}
+                        onKeyUp={() => hist.endGesture()}
+                        onDoubleClick={() => setAdj({ [current.key]: 0 })}
+                        aria-label={current.label}
+                      />
+                      <output className="slider-value" htmlFor={`adj-${current.key}`}>
+                        {adj[current.key] > 0 ? `+${adj[current.key]}` : adj[current.key]}
+                      </output>
+                    </div>
+                  </div>
+                )}
+
+                {panel === 'background' && (
+                  <BackgroundPanel
+                    cut={cut}
+                    merged={!!stack?.merged}
+                    mode={bgModeOf(bgLayer)}
+                    bg={bgLayer}
+                    onRemove={removeBackground}
+                    onMode={(m: BgMode) => setStack((s) => (s ? setBackground(s, srcW, srcH, m) : s))}
+                    onColor={(c) => setStack((s) => (s ? setBackground(s, srcW, srcH, 'color', { color: c }) : s))}
+                    onBlur={(v, end) => bgLayer && setStackLive((s) => updateLayer(s, bgLayer.id, { blur: v }), end)}
+                    onPickImage={() => pickPhoto('background')}
+                    onRestore={() =>
+                      setStack((s) => {
+                        if (!s) return s;
+                        const rest = s.layers.filter((l) => l.role !== 'subject' && l.role !== 'background');
+                        return rest.length ? { layers: [{ ...backgroundLayer(setBackground(s, srcW, srcH, 'original'))!, role: undefined, name: 'Фото' }, ...rest], merged: null } : null;
+                      })
+                    }
+                  />
+                )}
+
+                {panel === 'layers' && (
+                  <LayersPanel
+                    stack={stack}
+                    selected={selectedLayer}
+                    files={files}
+                    srcUrl={url}
+                    blurUrl={blurUrl}
+                    onSelect={setSelectedLayer}
+                    onUpdate={(id, p, end) => setStackLive((s) => updateLayer(s, id, p), end)}
+                    onMove={(id, dir) => setStack((s) => (s ? moveLayer(s, id, dir) : s))}
+                    onDuplicate={(id) => {
+                      if (!stack) return;
+                      const r = duplicateLayer(stack, id);
+                      hist.apply((e) => ({ ...e, stack: r.stack }));
+                      setSelectedLayer(r.id);
+                    }}
+                    onRemove={(id) => {
+                      setStack((s) => (s ? removeLayer(s, id) : s));
+                      setSelectedLayer(null);
+                    }}
+                    onAddPhoto={() => pickPhoto('layer')}
+                    onMerge={merge}
+                    onUnmerge={() => {
+                      setStack((s) => (s ? { ...s, merged: null } : s));
+                      setAdjustAll(false);
+                    }}
+                    onBrush={setBrushing}
+                  />
+                )}
+
+                {panel === 'text' && (
+                  <div className="text-panel">
+                    <div className="chip-row chip-row-scroll">
+                      <button className="pill pill-add" onClick={addText}>
+                        <Icon name="plus" size={16} stroke={2.6} /> Добавить текст
+                      </button>
+                      {edits.texts.map((t) => (
+                        <button key={t.id} className="pill" onClick={() => setEditingText(t.id)}>
+                          {t.text.split('\n')[0].slice(0, 18) || 'Текст'}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="muted small">{edits.texts.length ? 'Перетаскивайте текст пальцем, нажмите — чтобы изменить.' : 'Надпись появится в центре фото.'}</p>
+                  </div>
+                )}
+
+                <div className="panel-foot">
+                  <span className="muted small">{persisted ? 'Правки сохраняются автоматически' : 'Хранилище недоступно — правки не сохранятся'}</span>
+                  {isEdited(edits) && (
+                    <button className="link-btn" onClick={() => hist.apply(() => ({ ...DEFAULT_EDITS }))}>
+                      <Icon name="reset" size={16} /> Сбросить всё
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
 
       <TextSheet
         layer={editingLayer}
-        onChange={(p) => editingLayer && updateText(editingLayer.id, p)}
+        onChange={(p) => editingLayer && updateText(editingLayer.id, p, false)}
         onDelete={() => editingLayer && deleteText(editingLayer.id)}
         onClose={closeTextEditor}
       />
       <ExportSheet result={result} filename={filename} onClose={() => setResult(null)} />
-      <Sheet open={askDownload} onClose={() => setAskDownload(false)} title="Скачать модель?">
-        <div className="feature-sheet">
-          <p className="feature-note">
-            Для удаления фона нужна модель ИИ{modelSize ? ` (${formatBytes(modelSize)})` : ''}. Она скачивается один раз, сохраняется на этом устройстве и дальше
-            работает без интернета. Фото никуда не отправляются.
-          </p>
-          <p className="muted small">Лучше скачивать по Wi-Fi. Удалить модель можно в разделе «ИИ-инструменты».</p>
-          <button className="btn btn-primary btn-block" onClick={() => removeBackground(true)}>
-            Скачать и удалить фон
-          </button>
-          <button className="btn btn-soft btn-block" onClick={() => setAskDownload(false)}>
-            Не сейчас
-          </button>
-        </div>
-      </Sheet>
     </div>
   );
 }

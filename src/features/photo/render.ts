@@ -4,7 +4,8 @@
  * прогресс передаётся наружу.
  */
 import { loadImage, MediaError } from '../../lib/media';
-import { applyAdjustments, blurredBackdrop, pixelParams, TEXT_FONTS, type PhotoEdits, type PixelParams, type TextLayer } from './pipeline';
+import { applyAdjustments, blurredBackdrop, isNeutralAdjust, pixelParams, TEXT_FONTS, type PhotoEdits, type PixelParams, type TextLayer } from './pipeline';
+import { layerBox, type LayerStack, type PhotoLayer } from './layers';
 
 export interface RenderResult {
   blob: Blob;
@@ -25,19 +26,24 @@ export interface RenderOptions {
   quality?: number;
   useWorker?: boolean;
   onProgress?: (value: number, label: string) => void;
-  /** Файлы для замены фона (маска и картинка фона) */
-  assets?: PhotoAssets;
+  /** Файлы слоёв (изображения, маски, объединённое фото) по id */
+  files?: Record<string, Blob>;
 }
 
-export interface PhotoAssets {
-  mask?: Blob | null;
-  bgImage?: Blob | null;
+/** Закрывает ли слой весь документ без прозрачности */
+function opaqueCover(l: PhotoLayer, docW: number, docH: number): boolean {
+  if (!l.visible || l.opacity < 1) return false;
+  if (l.kind !== 'photo') return true;
+  if (l.mask || l.rotation % 360 !== 0) return false;
+  const b = layerBox(l, docW, docH);
+  return l.x - b.w / 2 <= 0.001 && l.x + b.w / 2 >= 0.999 && l.y - b.h / 2 <= 0.001 && l.y + b.h / 2 >= 0.999;
 }
 
 /** Нужна ли прозрачность в итоговом файле (JPEG её не поддерживает). */
-export function needsAlpha(e: PhotoEdits): boolean {
-  const b = e.background;
-  return !!b && (b.mode === 'transparent' || (b.mode === 'image' && !b.image));
+export function stackHasAlpha(stack: LayerStack | null, docW: number, docH: number): boolean {
+  if (!stack) return false;
+  if (stack.merged) return stack.merged.alpha;
+  return !stack.layers.some((l) => opaqueCover(l, docW, docH));
 }
 
 async function loadBlobImage(blob: Blob, urls: string[]): Promise<HTMLImageElement> {
@@ -191,11 +197,102 @@ export function outputGeometry(srcW: number, srcH: number, e: PhotoEdits) {
   return { rw, rh, crop: c, cw: Math.max(1, Math.round(c.w * rw)), ch: Math.max(1, Math.round(c.h * rh)) };
 }
 
+function makeCanvas(w: number, h: number, read = false): [HTMLCanvasElement, CanvasRenderingContext2D] {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d', read ? { willReadFrequently: true } : undefined);
+  if (!ctx) throw new MediaError('Браузер не дал холст для рендера. Закройте другие вкладки и повторите.');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  return [c, ctx];
+}
+
+/**
+ * Слои → один холст размером cw×ch (документ = исходное фото W0×H0).
+ * Каждый слой рисуется отдельно, со своей цветокоррекцией и прозрачностью.
+ */
+export async function composeStack(
+  src: HTMLImageElement,
+  stack: LayerStack,
+  files: Record<string, Blob>,
+  cw: number,
+  ch: number,
+  opts: { useWorker?: boolean; onProgress?: (v: number, label: string) => void } = {},
+): Promise<HTMLCanvasElement> {
+  const W0 = src.naturalWidth;
+  const H0 = src.naturalHeight;
+  const urls: string[] = [];
+  const images = new Map<string, HTMLImageElement>();
+  const image = async (id: string) => {
+    if (!images.has(id)) {
+      const b = files[id];
+      if (!b) throw new MediaError('Файл слоя не найден. Откройте проект заново.');
+      images.set(id, await loadBlobImage(b, urls));
+    }
+    return images.get(id)!;
+  };
+  const [out, octx] = makeCanvas(cw, ch);
+  try {
+    if (stack.merged) {
+      octx.drawImage(await image(stack.merged.media), 0, 0, cw, ch);
+      return out;
+    }
+    const [lc, lctx] = makeCanvas(cw, ch, true);
+    const visible = stack.layers.filter((l) => l.visible && l.opacity > 0);
+    for (let i = 0; i < visible.length; i++) {
+      const l = visible[i];
+      opts.onProgress?.(i / visible.length, `Слой «${l.name}»…`);
+      lctx.setTransform(1, 0, 0, 1, 0, 0);
+      lctx.globalCompositeOperation = 'source-over';
+      lctx.clearRect(0, 0, cw, ch);
+      if (l.kind === 'color') {
+        lctx.fillStyle = l.color;
+        lctx.fillRect(0, 0, cw, ch);
+      } else if (l.kind === 'blur') {
+        const b = blurredBackdrop(src, W0, H0, l.blur);
+        lctx.drawImage(b, 0, 0, cw, ch);
+        b.width = b.height = 1;
+      } else {
+        const im = l.media ? await image(l.media) : src;
+        const box = layerBox(l, W0, H0);
+        const lw = box.w * cw;
+        const lh = box.h * ch;
+        const place = () => {
+          lctx.setTransform(1, 0, 0, 1, l.x * cw, l.y * ch);
+          lctx.rotate((l.rotation * Math.PI) / 180);
+          if (l.flip) lctx.scale(-1, 1);
+        };
+        place();
+        lctx.drawImage(im, -lw / 2, -lh / 2, lw, lh);
+        if (l.mask) {
+          lctx.globalCompositeOperation = 'destination-in';
+          lctx.drawImage(await image(l.mask), -lw / 2, -lh / 2, lw, lh);
+        }
+        lctx.setTransform(1, 0, 0, 1, 0, 0);
+        lctx.globalCompositeOperation = 'source-over';
+      }
+      if (!isNeutralAdjust(l.adjust)) {
+        const p = pixelParams(l.adjust);
+        const data = lctx.getImageData(0, 0, cw, ch);
+        const done = opts.useWorker === false ? await processOnMain(data, p, () => undefined) : await processInWorker(data, p, () => undefined);
+        lctx.putImageData(done, 0, 0);
+      }
+      octx.globalAlpha = l.opacity;
+      octx.drawImage(lc, 0, 0);
+      octx.globalAlpha = 1;
+    }
+    lc.width = lc.height = 1;
+    return out;
+  } finally {
+    urls.forEach((u) => URL.revokeObjectURL(u));
+  }
+}
+
 export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderOptions = {}): Promise<RenderResult> {
   const report = opts.onProgress ?? (() => undefined);
   report(0.02, 'Открываю оригинал…');
   const url = URL.createObjectURL(source);
-  const extraUrls: string[] = [];
   try {
     const img = await loadImage(url);
     if (img.decode) await img.decode().catch(() => undefined);
@@ -226,46 +323,19 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
       c.translate(g.rw / 2, g.rh / 2);
       c.rotate((edits.rotation * Math.PI) / 180);
     };
-    const bg = edits.background && opts.assets?.mask ? edits.background : null;
-    if (!bg) {
+    if (!edits.stack) {
       imageSpace(ctx);
       ctx.drawImage(img, -W0 / 2, -H0 / 2, W0, H0);
     } else {
-      report(0.12, 'Замена фона…');
-      const mask = await loadBlobImage(opts.assets!.mask!, extraUrls);
-      const bgImg = bg.mode === 'image' && opts.assets?.bgImage ? await loadBlobImage(opts.assets.bgImage, extraUrls) : null;
-      if (bg.mode === 'color') {
-        frame(ctx);
-        ctx.fillStyle = bg.color;
-        ctx.fillRect(0, 0, g.rw, g.rh);
-      } else if (bgImg) {
-        // Как background-size: cover по всему повёрнутому кадру
-        const iw = bgImg.naturalWidth;
-        const ih = bgImg.naturalHeight;
-        const k = Math.max(g.rw / iw, g.rh / ih);
-        frame(ctx);
-        ctx.drawImage(bgImg, (g.rw - iw * k) / 2, (g.rh - ih * k) / 2, iw * k, ih * k);
-      } else if (bg.mode === 'blur') {
-        const blurred = blurredBackdrop(img, W0, H0, bg.blur);
-        imageSpace(ctx);
-        ctx.drawImage(blurred, -W0 / 2, -H0 / 2, W0, H0);
-        blurred.width = blurred.height = 1;
-      }
-      // Объект: исходник, вырезанный маской, на отдельном слое
-      const layer = document.createElement('canvas');
-      layer.width = ow;
-      layer.height = oh;
-      const lctx = layer.getContext('2d');
-      if (!lctx) throw new MediaError('Браузер не дал холст для рендера. Закройте другие вкладки и повторите.');
-      lctx.imageSmoothingEnabled = true;
-      lctx.imageSmoothingQuality = 'high';
-      imageSpace(lctx);
-      lctx.drawImage(img, -W0 / 2, -H0 / 2, W0, H0);
-      lctx.globalCompositeOperation = 'destination-in';
-      lctx.drawImage(mask, -W0 / 2, -H0 / 2, W0, H0);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.drawImage(layer, 0, 0);
-      layer.width = layer.height = 1;
+      // Слои собираются в размере документа (не больше, чем нужно для итогового кадра)
+      const ds = Math.min(scale, Math.sqrt(maxPixels / (W0 * H0)));
+      const comp = await composeStack(img, edits.stack, opts.files ?? {}, Math.max(1, Math.round(W0 * ds)), Math.max(1, Math.round(H0 * ds)), {
+        useWorker: opts.useWorker,
+        onProgress: (v, label) => report(0.1 + v * 0.1, label),
+      });
+      imageSpace(ctx);
+      ctx.drawImage(comp, -W0 / 2, -H0 / 2, W0, H0);
+      comp.width = comp.height = 1;
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -292,7 +362,7 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
     }
 
     report(0.9, 'Сохраняю файл…');
-    const type = needsAlpha(edits) && opts.assets?.mask ? 'image/png' : opts.type ?? 'image/jpeg';
+    const type = stackHasAlpha(edits.stack, W0, H0) ? 'image/png' : opts.type ?? 'image/jpeg';
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, type, opts.quality ?? 0.95));
     // Освобождаем память холста сразу (важно для iOS).
     canvas.width = canvas.height = 1;
@@ -301,7 +371,6 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
     return { blob, width: ow, height: oh, limited, sourceWidth: g.cw, sourceHeight: g.ch, type };
   } finally {
     URL.revokeObjectURL(url);
-    extraUrls.forEach((u) => URL.revokeObjectURL(u));
   }
 }
 

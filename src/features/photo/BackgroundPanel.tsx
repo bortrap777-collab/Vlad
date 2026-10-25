@@ -1,60 +1,66 @@
 import { Icon } from '../../components/Icon';
-import { formatBytes } from '../../lib/format';
-import { BG_COLORS, type BackgroundEdit, type BackgroundMode } from './pipeline';
+import { BG_COLORS } from './pipeline';
+import type { BgMode, PhotoLayer } from './layers';
 
-const MODES: { id: BackgroundMode; label: string }[] = [
-  { id: 'transparent', label: 'Без фона' },
+const MODES: { id: BgMode; label: string }[] = [
+  { id: 'original', label: 'Оригинал' },
+  { id: 'none', label: 'Без фона' },
   { id: 'color', label: 'Цвет' },
   { id: 'blur', label: 'Размытие' },
   { id: 'image', label: 'Фото' },
 ];
 
 interface Props {
-  bg: BackgroundEdit | null;
-  /** null — ещё неизвестно, true — модель на устройстве */
-  modelReady: boolean | null;
-  modelSize: number | null;
+  /** Объект уже вырезан (есть слой «Объект») */
+  cut: boolean;
+  mode: BgMode;
+  bg: PhotoLayer | null;
+  merged: boolean;
   onRemove: () => void;
-  onChange: (p: Partial<BackgroundEdit>) => void;
+  onMode: (m: BgMode) => void;
+  onColor: (c: string) => void;
+  onBlur: (v: number, end: boolean) => void;
   onPickImage: () => void;
   onRestore: () => void;
 }
 
-/** Панель «Фон» фоторедактора: удаление фона моделью и выбор замены. */
-export function BackgroundPanel({ bg, modelReady, modelSize, onRemove, onChange, onPickImage, onRestore }: Props) {
-  if (!bg) {
+/** Панель «Фон»: одна кнопка «Удалить фон», затем выбор, что поставить вместо фона. */
+export function BackgroundPanel({ cut, mode, bg, merged, onRemove, onMode, onColor, onBlur, onPickImage, onRestore }: Props) {
+  if (!cut || merged) {
     return (
       <div className="bg-panel">
         <button className="btn btn-primary btn-block" onClick={onRemove}>
           <Icon name="cutout" size={20} /> Удалить фон
         </button>
         <p className="muted small">
-          {modelReady
-            ? 'Модель на устройстве: фото обрабатывается здесь же, без интернета.'
-            : `При первом запуске скачается модель${modelSize ? ` (${formatBytes(modelSize)})` : ''} — один раз, лучше по Wi-Fi. Фото никуда не отправляется.`}
+          {merged
+            ? 'Слои объединены. Удаление фона разъединит их и вырежет объект из исходного фото.'
+            : 'Объект станет отдельным слоем: его можно двигать, вращать и менять пальцами. Работает на устройстве, без интернета после первой загрузки модели.'}
         </p>
       </div>
     );
   }
 
-  const choose = (mode: BackgroundMode) => {
-    if (mode === 'image' && !bg.image) onPickImage();
-    else onChange({ mode });
-  };
-
   return (
     <div className="bg-panel">
       <div className="chip-row chip-row-scroll" role="radiogroup" aria-label="Фон">
         {MODES.map((m) => (
-          <button key={m.id} role="radio" aria-checked={bg.mode === m.id} className={`pill ${bg.mode === m.id ? 'is-active' : ''}`} onClick={() => choose(m.id)}>
+          <button
+            key={m.id}
+            role="radio"
+            aria-checked={mode === m.id}
+            className={`pill ${mode === m.id ? 'is-active' : ''}`}
+            onClick={() => (m.id === 'image' ? onPickImage() : onMode(m.id))}
+          >
             {m.label}
           </button>
         ))}
       </div>
 
-      {bg.mode === 'transparent' && <p className="muted small">Сохранится в PNG с прозрачным фоном.</p>}
+      {mode === 'none' && <p className="muted small">Сохранится в PNG с прозрачным фоном.</p>}
+      {mode === 'original' && <p className="muted small">Объект — отдельный слой поверх исходного фото. Двигайте его во вкладке «Слои».</p>}
 
-      {bg.mode === 'color' && (
+      {mode === 'color' && bg && (
         <div className="swatches swatches-row">
           {BG_COLORS.map((c) => (
             <button
@@ -62,16 +68,16 @@ export function BackgroundPanel({ bg, modelReady, modelSize, onRemove, onChange,
               className={`swatch ${bg.color.toUpperCase() === c ? 'is-active' : ''}`}
               style={{ background: c }}
               aria-label={`Цвет ${c}`}
-              onClick={() => onChange({ color: c })}
+              onClick={() => onColor(c)}
             />
           ))}
           <label className={`swatch swatch-custom ${BG_COLORS.includes(bg.color.toUpperCase()) ? '' : 'is-active'}`} aria-label="Свой цвет">
-            <input type="color" value={bg.color} onChange={(e) => onChange({ color: e.target.value.toUpperCase() })} />
+            <input type="color" value={bg.color} onChange={(e) => onColor(e.target.value.toUpperCase())} />
           </label>
         </div>
       )}
 
-      {bg.mode === 'blur' && (
+      {mode === 'blur' && bg && (
         <div className="slider-row">
           <input
             className="slider"
@@ -80,16 +86,18 @@ export function BackgroundPanel({ bg, modelReady, modelSize, onRemove, onChange,
             max={100}
             step={1}
             value={Math.round(bg.blur * 100)}
-            onChange={(e) => onChange({ blur: Number(e.target.value) / 100 })}
+            onChange={(e) => onBlur(Number(e.target.value) / 100, false)}
+            onPointerUp={() => onBlur(bg.blur, true)}
+            onKeyUp={() => onBlur(bg.blur, true)}
             aria-label="Сила размытия"
           />
           <output className="slider-value">{Math.round(bg.blur * 100)}</output>
         </div>
       )}
 
-      {bg.mode === 'image' && (
+      {mode === 'image' && (
         <button className="pill pill-add" onClick={onPickImage}>
-          <Icon name="image" size={16} /> {bg.image ? 'Выбрать другое фото' : 'Выбрать фото для фона'}
+          <Icon name="image" size={16} /> Выбрать другое фото
         </button>
       )}
 
@@ -98,7 +106,7 @@ export function BackgroundPanel({ bg, modelReady, modelSize, onRemove, onChange,
           <Icon name="cutout" size={16} /> Вырезать заново
         </button>
         <button className="link-btn" onClick={onRestore}>
-          <Icon name="reset" size={16} /> Вернуть исходный фон
+          <Icon name="reset" size={16} /> Вернуть как было
         </button>
       </div>
     </div>

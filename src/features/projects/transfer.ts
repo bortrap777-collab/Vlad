@@ -5,6 +5,7 @@
  * При импорте все идентификаторы заменяются новыми, чтобы не пересечься с проектами на устройстве.
  */
 import { getMedia, getProject, newId, notifyProjectsChanged, projectMediaIds, putMedia, putProject, deleteMedia, type ProjectMeta } from '../../lib/db';
+import { remapEditIds } from '../photo/pipeline';
 import { readText, readZip, verifyEntry, writeZip, ZipError, type ZipInput } from '../../lib/zip';
 
 const FORMAT = 'w-studio-project';
@@ -72,16 +73,7 @@ export async function importProjectFile(file: Blob, onProgress: (v: number, labe
           music: old.timeline.music ? { ...old.timeline.music, src: idFor(old.timeline.music.src) } : null,
         }
       : undefined,
-    photoEdits: old.photoEdits?.background
-      ? {
-          ...old.photoEdits,
-          background: {
-            ...old.photoEdits.background,
-            mask: idFor(old.photoEdits.background.mask),
-            image: old.photoEdits.background.image ? idFor(old.photoEdits.background.image) : null,
-          },
-        }
-      : old.photoEdits,
+    photoEdits: old.photoEdits ? remapEditIds(old.photoEdits, idFor) : old.photoEdits,
   };
 
   const total = manifest.media.reduce((a, m) => a + m.size, 0) || 1;

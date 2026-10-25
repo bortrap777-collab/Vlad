@@ -32,19 +32,16 @@ export interface TextLayer {
   style: TextStyle;
 }
 
-export type BackgroundMode = 'transparent' | 'color' | 'blur' | 'image';
-
-/** Замена фона по маске от ИИ (маска и картинка фона — отдельные файлы проекта). */
-export interface BackgroundEdit {
-  /** id файла маски: PNG, прозрачность = фон, в ориентации исходного фото */
+/** Замена фона в версии 0.5.0 — теперь это слои; поле читается только для переноса старых проектов. */
+interface LegacyBackground {
   mask: string;
-  mode: BackgroundMode;
+  mode: 'transparent' | 'color' | 'blur' | 'image';
   color: string;
-  /** Сила размытия 0…1 */
   blur: number;
-  /** id файла картинки фона */
   image: string | null;
 }
+
+import { setBackground, stackMediaIds, withCutout, type Adjust, type LayerStack } from './layers';
 
 export const BG_COLORS = ['#FFFFFF', '#111111', '#8366FF', '#E9E4FF', '#FFD84D', '#FF6FA3', '#4C9BFF', '#2FCB8A'];
 
@@ -59,7 +56,8 @@ export interface PhotoEdits {
   rotation: number;
   crop: CropRect | null;
   texts: TextLayer[];
-  background: BackgroundEdit | null;
+  /** Слои; null — обычное фото без слоёв */
+  stack: LayerStack | null;
 }
 
 export type PresetId = 'original' | 'vivid' | 'warm' | 'cool' | 'mono' | 'film';
@@ -93,7 +91,7 @@ export const DEFAULT_EDITS: PhotoEdits = {
   rotation: 0,
   crop: null,
   texts: [],
-  background: null,
+  stack: null,
 };
 
 export const TEXT_FONTS: Record<TextFont, { name: string; family: string; weight: number }> = {
@@ -122,7 +120,7 @@ export interface PixelParams {
 const WARM = '#FF9A2E';
 const COOL = '#2E8BFF';
 
-export function pixelParams(e: PhotoEdits, presetOverride?: PresetId): PixelParams {
+export function pixelParams(e: Adjust, presetOverride?: PresetId): PixelParams {
   const p = presetOf(presetOverride ?? e.preset);
   const t = Math.max(-100, Math.min(100, p.t + e.temperature));
   let temp: PixelParams['temp'] = null;
@@ -145,7 +143,7 @@ export function pixelParams(e: PhotoEdits, presetOverride?: PresetId): PixelPara
   };
 }
 
-export function toCssFilter(e: PhotoEdits, presetOverride?: PresetId): string {
+export function toCssFilter(e: Adjust, presetOverride?: PresetId): string {
   const p = pixelParams(e, presetOverride);
   const parts = [`brightness(${p.b.toFixed(3)})`, `contrast(${p.c.toFixed(3)})`, `saturate(${p.s.toFixed(3)})`];
   if (p.gray) parts.push(`grayscale(${p.gray})`);
@@ -153,7 +151,7 @@ export function toCssFilter(e: PhotoEdits, presetOverride?: PresetId): string {
   return parts.join(' ');
 }
 
-export function temperatureLayer(e: PhotoEdits, presetOverride?: PresetId): { color: string; opacity: number } | null {
+export function temperatureLayer(e: Adjust, presetOverride?: PresetId): { color: string; opacity: number } | null {
   const p = pixelParams(e, presetOverride);
   if (!p.temp) return null;
   const hex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
@@ -164,16 +162,43 @@ export function isEdited(e: PhotoEdits): boolean {
   return JSON.stringify(normalizeEdits(e)) !== JSON.stringify(DEFAULT_EDITS);
 }
 
-/** Старые проекты не знают про crop, texts и background — дополняем. */
-export function normalizeEdits(e: Partial<PhotoEdits> | undefined): PhotoEdits {
-  return { ...DEFAULT_EDITS, ...e, crop: e?.crop ?? null, texts: e?.texts ?? [], background: e?.background ?? null };
+/** Старые проекты не знают про crop, texts и слои — дополняем. */
+export function normalizeEdits(e: (Partial<PhotoEdits> & { background?: LegacyBackground | null }) | undefined, docW = 1, docH = 1): PhotoEdits {
+  const { background, ...rest } = e ?? {};
+  let stack = rest.stack ?? null;
+  if (!stack && background) {
+    // 0.5.0: маска + режим фона → слои «Фон» и «Объект»
+    stack = withCutout(null, docW, docH, background.mask);
+    const mode = background.mode === 'transparent' ? 'none' : background.mode === 'image' && !background.image ? 'none' : background.mode;
+    stack = setBackground(stack, docW, docH, mode, { color: background.color, media: background.image ?? undefined });
+    if (mode === 'blur') stack = { ...stack, layers: stack.layers.map((l) => (l.role === 'background' ? { ...l, blur: background.blur } : l)) };
+  }
+  return { ...DEFAULT_EDITS, ...rest, crop: rest.crop ?? null, texts: rest.texts ?? [], stack };
 }
 
 /** Файлы проекта, на которые ссылаются правки (кроме исходника). */
-export function editMediaIds(e: Partial<PhotoEdits> | undefined): string[] {
-  const b = e?.background;
-  if (!b) return [];
-  return b.image ? [b.mask, b.image] : [b.mask];
+export function editMediaIds(e: (Partial<PhotoEdits> & { background?: LegacyBackground | null }) | undefined): string[] {
+  const legacy = e?.background ? [e.background.mask, ...(e.background.image ? [e.background.image] : [])] : [];
+  return [...new Set([...legacy, ...stackMediaIds(e?.stack)])];
+}
+
+/** Замена id файлов (перенос проекта на другое устройство) */
+export function remapEditIds<T extends Partial<PhotoEdits> & { background?: LegacyBackground | null }>(e: T, idFor: (id: string) => string): T {
+  const m = (id: string | null) => (id ? idFor(id) : null);
+  return {
+    ...e,
+    background: e.background ? { ...e.background, mask: idFor(e.background.mask), image: m(e.background.image) } : e.background,
+    stack: e.stack
+      ? {
+          layers: e.stack.layers.map((l) => ({ ...l, media: m(l.media), mask: m(l.mask) })),
+          merged: e.stack.merged ? { ...e.stack.merged, media: idFor(e.stack.merged.media) } : null,
+        }
+      : e.stack,
+  };
+}
+
+export function isNeutralAdjust(a: Adjust): boolean {
+  return a.preset === 'original' && !a.brightness && !a.contrast && !a.saturation && !a.temperature;
 }
 
 /**
