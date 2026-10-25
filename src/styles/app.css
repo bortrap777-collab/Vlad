@@ -2457,3 +2457,26 @@ button.row:active,
   padding: 6px 14px;
   min-height: 34px;
 }
+
+/* Ручка размера и поворота надписи */
+.text-handle {
+  position: absolute;
+  right: -14px;
+  bottom: -14px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #fff;
+  color: #1a1530;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  touch-action: none;
+  cursor: nwse-resize;
+}
+.text-handle::before {
+  /* палец больше значка: зона касания 44×44 */
+  content: '';
+  position: absolute;
+  inset: -8px;
+}

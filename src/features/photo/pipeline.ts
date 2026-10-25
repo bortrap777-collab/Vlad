@@ -27,6 +27,8 @@ export interface TextLayer {
   y: number;
   /** Размер шрифта в долях ширины кадра */
   size: number;
+  /** Поворот вокруг центра, градусы по часовой (нет — 0) */
+  rotation?: number;
   color: string;
   font: TextFont;
   style: TextStyle;

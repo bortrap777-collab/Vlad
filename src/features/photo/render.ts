@@ -83,8 +83,11 @@ export function drawTexts(ctx: CanvasRenderingContext2D, texts: TextLayer[], w: 
     ctx.font = `${def.weight} ${fs}px ${def.family}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const cx = t.x * w;
-    const cy = t.y * h;
+    // Поворот вокруг центра надписи — как в предпросмотре
+    ctx.translate(t.x * w, t.y * h);
+    if (t.rotation) ctx.rotate((t.rotation * Math.PI) / 180);
+    const cx = 0;
+    const cy = 0;
     const blockH = lines.length * lh;
     if (t.style === 'box') {
       const maxW = Math.max(...lines.map((l) => ctx.measureText(l).width));

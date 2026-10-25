@@ -275,7 +275,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
                 dw={dw}
                 dh={dh}
                 selected={selText?.id === t.id}
-                onMove={(id, x, y) => hist.live((tl) => updateText(tl, id, { x, y }))}
+                onChange={(id, g) => hist.live((tl) => updateText(tl, id, g))}
                 onEnd={hist.endGesture}
                 onTap={(id) => {
                   hist.endGesture();

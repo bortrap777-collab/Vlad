@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useRef, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
 import { useElementSize } from '../../lib/useElementSize';
 import { boxInk } from './render';
 import { dragCrop, FULL, type Handle } from './geometry';
@@ -21,7 +21,8 @@ interface Props {
   /** Режим обрезки: показываем всё изображение и рамку */
   crop?: { rect: CropRect; rn: number | null; onChange: (c: CropRect) => void } | null;
   selectedText?: string | null;
-  onTextMove?: (id: string, x: number, y: number) => void;
+  onTextChange?: (id: string, g: TextGeometry) => void;
+  onTextEnd?: () => void;
   onTextTap?: (id: string) => void;
   onMediaError?: () => void;
   /** Файлы слоёв: id → object URL */
@@ -45,7 +46,7 @@ const maskCss = (url: string): CSSProperties => ({
  * Предпросмотр фото. Геометрия считается так же, как в рендере (render.ts):
  * документ (слои) → поворот → окно обрезки → вписывание в экран.
  */
-export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText, onTextMove, onTextTap, onMediaError, files = {}, blurUrl, layerEdit }: Props) {
+export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText, onTextChange, onTextEnd, onTextTap, onMediaError, files = {}, blurUrl, layerEdit }: Props) {
   const [stageRef, stage] = useElementSize<HTMLDivElement>();
   const quarter = edits.rotation % 180 !== 0;
   const rw = quarter ? srcH : srcW;
@@ -192,7 +193,7 @@ export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText,
 
           {!crop &&
             edits.texts.map((t) => (
-              <TextItem key={t.id} t={t} dw={dw} dh={dh} selected={selectedText === t.id} onMove={onTextMove} onTap={onTextTap} />
+              <TextItem key={t.id} t={t} dw={dw} dh={dh} selected={selectedText === t.id} onChange={onTextChange} onEnd={onTextEnd} onTap={onTextTap} />
             ))}
 
           {crop && <CropFrame rect={crop.rect} rn={crop.rn} dw={dw} dh={dh} onChange={crop.onChange} />}
@@ -263,12 +264,28 @@ export function textStyle(t: TextLayer, frameW: number): CSSProperties {
   return s;
 }
 
+export type TextGeometry = Pick<TextLayer, 'x' | 'y' | 'size'> & { rotation: number };
+
+const TEXT_MIN = 0.02;
+const TEXT_MAX = 0.6;
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** Притягиваем к 0°, 90°, 180°, 270° — ровный текст легко поставить пальцами */
+function snapAngle(deg: number): number {
+  const n = Math.round(deg / 90) * 90;
+  return Math.abs(deg - n) < 4 ? n : deg;
+}
+
+/**
+ * Надпись на кадре. Один палец — двигать; два пальца (второй можно поставить где угодно) —
+ * размер и поворот; ручка в углу выбранной надписи — размер и поворот одним пальцем.
+ */
 export function TextItem({
   t,
   dw,
   dh,
   selected,
-  onMove,
+  onChange,
   onTap,
   onEnd,
 }: {
@@ -276,44 +293,135 @@ export function TextItem({
   dw: number;
   dh: number;
   selected: boolean;
-  onMove?: (id: string, x: number, y: number) => void;
+  onChange?: (id: string, g: TextGeometry) => void;
   onTap?: (id: string) => void;
   onEnd?: () => void;
 }) {
-  const start = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
-  const down = (e: RPointerEvent<HTMLDivElement>) => {
+  const el = useRef<HTMLDivElement | null>(null);
+  const pts = useRef(new Map<number, { x: number; y: number }>());
+  const g = useRef<{ mode: 'drag' | 'handle'; t0: TextGeometry; p0: Map<number, { x: number; y: number }>; c: { x: number; y: number }; moved: boolean } | null>(null);
+  // Последнее значение жеста: события приходят быстрее перерисовки
+  const live = useRef<TextGeometry | null>(null);
+  const cur = (): TextGeometry => live.current ?? { x: t.x, y: t.y, size: t.size, rotation: t.rotation ?? 0 };
+  const center = () => {
+    const r = el.current!.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  };
+  const rebase = () => {
+    if (g.current) g.current = { ...g.current, t0: cur(), p0: new Map(pts.current), c: center() };
+  };
+  const emit = (v: TextGeometry) => {
+    live.current = v;
+    onChange?.(t.id, v);
+  };
+
+  const onMove = (e: PointerEvent) => {
+    const s = g.current;
+    if (!s || !pts.current.has(e.pointerId)) return;
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const ids = [...s.p0.keys()].filter((id) => pts.current.has(id));
+    if (ids.length >= 2) {
+      const [a0, b0] = [s.p0.get(ids[0])!, s.p0.get(ids[1])!];
+      const [a1, b1] = [pts.current.get(ids[0])!, pts.current.get(ids[1])!];
+      const k = Math.hypot(b1.x - a1.x, b1.y - a1.y) / (Math.hypot(b0.x - a0.x, b0.y - a0.y) || 1);
+      const turn = ((Math.atan2(b1.y - a1.y, b1.x - a1.x) - Math.atan2(b0.y - a0.y, b0.x - a0.x)) * 180) / Math.PI;
+      s.moved = true;
+      emit({
+        x: clamp01(s.t0.x + (a1.x + b1.x - a0.x - b0.x) / 2 / dw),
+        y: clamp01(s.t0.y + (a1.y + b1.y - a0.y - b0.y) / 2 / dh),
+        size: Math.min(TEXT_MAX, Math.max(TEXT_MIN, s.t0.size * k)),
+        rotation: snapAngle(s.t0.rotation + turn),
+      });
+    } else if (ids.length === 1) {
+      const p0 = s.p0.get(ids[0])!;
+      const p1 = pts.current.get(ids[0])!;
+      if (!s.moved && Math.hypot(p1.x - p0.x, p1.y - p0.y) < 5) return;
+      s.moved = true;
+      if (s.mode === 'handle') {
+        // Ручка: расстояние до центра — размер, угол вокруг центра — поворот
+        const v0 = { x: p0.x - s.c.x, y: p0.y - s.c.y };
+        const v1 = { x: p1.x - s.c.x, y: p1.y - s.c.y };
+        const k = Math.hypot(v1.x, v1.y) / (Math.hypot(v0.x, v0.y) || 1);
+        const turn = ((Math.atan2(v1.y, v1.x) - Math.atan2(v0.y, v0.x)) * 180) / Math.PI;
+        emit({ ...s.t0, size: Math.min(TEXT_MAX, Math.max(TEXT_MIN, s.t0.size * k)), rotation: snapAngle(s.t0.rotation + turn) });
+      } else {
+        emit({ ...s.t0, x: clamp01(s.t0.x + (p1.x - p0.x) / dw), y: clamp01(s.t0.y + (p1.y - p0.y) / dh) });
+      }
+    }
+  };
+
+  // Второй палец может лечь мимо надписи — ловим его на всём окне, пока первый держит надпись
+  const onWindowDown = (e: PointerEvent) => {
+    if (!g.current || pts.current.has(e.pointerId) || pts.current.size >= 2) return;
     e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    start.current = { px: e.clientX, py: e.clientY, x: t.x, y: t.y, moved: false };
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    rebase();
   };
-  const move = (e: RPointerEvent<HTMLDivElement>) => {
-    const s = start.current;
-    if (!s) return;
-    const dx = e.clientX - s.px;
-    const dy = e.clientY - s.py;
-    if (!s.moved && Math.hypot(dx, dy) < 5) return;
-    s.moved = true;
-    onMove?.(t.id, Math.min(1, Math.max(0, s.x + dx / dw)), Math.min(1, Math.max(0, s.y + dy / dh)));
-  };
-  const up = () => {
-    const s = start.current;
-    start.current = null;
-    if (s && !s.moved) onTap?.(t.id);
+  const onUp = (e: PointerEvent) => {
+    if (!pts.current.delete(e.pointerId)) return;
+    const s = g.current;
+    if (pts.current.size > 0) {
+      rebase();
+      return;
+    }
+    detach();
+    g.current = null;
+    live.current = null;
+    if (s && !s.moved && s.mode === 'drag') onTap?.(t.id);
     else if (s?.moved) onEnd?.();
   };
+  const listeners = useRef({ onMove, onWindowDown, onUp });
+  listeners.current = { onMove, onWindowDown, onUp };
+  const h = useRef({
+    move: (e: PointerEvent) => listeners.current.onMove(e),
+    down: (e: PointerEvent) => listeners.current.onWindowDown(e),
+    up: (e: PointerEvent) => listeners.current.onUp(e),
+  }).current;
+  const attach = () => {
+    window.addEventListener('pointerdown', h.down, true);
+    window.addEventListener('pointermove', h.move, true);
+    window.addEventListener('pointerup', h.up, true);
+    window.addEventListener('pointercancel', h.up, true);
+  };
+  const detach = () => {
+    window.removeEventListener('pointerdown', h.down, true);
+    window.removeEventListener('pointermove', h.move, true);
+    window.removeEventListener('pointerup', h.up, true);
+    window.removeEventListener('pointercancel', h.up, true);
+  };
+
+  const begin = (mode: 'drag' | 'handle') => (e: RPointerEvent<HTMLElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (g.current) return;
+    pts.current.clear();
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    live.current = null;
+    g.current = { mode, t0: cur(), p0: new Map(pts.current), c: center(), moved: false };
+    attach();
+  };
+
+  // Ушли с экрана посреди жеста — снимаем слушатели окна
+  useEffect(() => detach, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div
+      ref={el}
       className={`text-layer ${selected ? 'is-selected' : ''}`}
-      style={{ left: t.x * dw, top: t.y * dh }}
-      onPointerDown={down}
-      onPointerMove={move}
-      onPointerUp={up}
-      onPointerCancel={() => (start.current = null)}
+      style={{ left: t.x * dw, top: t.y * dh, transform: `translate(-50%, -50%) rotate(${t.rotation ?? 0}deg)` }}
+      onPointerDown={begin('drag')}
       onClick={(e) => e.stopPropagation()}
       role="button"
       aria-label={`Текст: ${t.text}`}
     >
       <span style={textStyle(t, dw)}>{t.text || ' '}</span>
+      {selected && onChange && (
+        <span className="text-handle" onPointerDown={begin('handle')} aria-label="Размер и поворот" role="button">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      )}
     </div>
   );
 }

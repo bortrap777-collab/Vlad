@@ -60,6 +60,8 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   const [activeAdjust, setActiveAdjust] = useState<(typeof ADJUST)[number]['key']>('brightness');
   const [cropping, setCropping] = useState<{ rect: CropRect; aspect: AspectId } | null>(null);
   const [editingText, setEditingText] = useState<string | null>(null);
+  /** Выбранная надпись: рамка и ручка размера/поворота; повторное касание открывает редактор */
+  const [pickedText, setPickedText] = useState<string | null>(null);
   const [result, setResult] = useState<RenderResult | null>(null);
   const [mediaFailed, setMediaFailed] = useState(false);
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
@@ -439,6 +441,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     const layer: TextLayer = { id: newId(), text: 'Ваш текст', x: 0.5, y: 0.5, size: 0.09, color: '#FFFFFF', font: 'accent', style: 'shadow' };
     set({ texts: [...edits.texts, layer] });
     setEditingText(layer.id);
+    setPickedText(layer.id);
   };
   const updateText = (id: string, p: Partial<TextLayer>, end = true) => {
     hist.live((e) => ({ ...e, texts: e.texts.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
@@ -575,11 +578,13 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
               edits={edits}
               loading={loading}
               crop={cropping ? { rect: cropping.rect, rn: aspectRn, onChange: (rect) => setCropping((c) => (c ? { ...c, rect } : c)) } : null}
-              selectedText={editingText}
-              onTextMove={(id, x, y) => updateText(id, { x, y }, false)}
+              selectedText={editingText ?? (panel === 'text' && edits.texts.some((t) => t.id === pickedText) ? pickedText : null)}
+              onTextChange={(id, g) => updateText(id, g, false)}
+              onTextEnd={() => hist.endGesture()}
               onTextTap={(id) => {
                 setPanel('text');
-                setEditingText(id);
+                if (pickedText === id) setEditingText(id);
+                else setPickedText(id);
               }}
               onMediaError={() => setMediaFailed(true)}
               files={files}
@@ -785,12 +790,19 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
                         <Icon name="plus" size={16} stroke={2.6} /> Добавить текст
                       </button>
                       {edits.texts.map((t) => (
-                        <button key={t.id} className="pill" onClick={() => setEditingText(t.id)}>
+                        <button
+                          key={t.id}
+                          className={`pill ${pickedText === t.id ? 'is-active' : ''}`}
+                          onClick={() => {
+                            setPickedText(t.id);
+                            setEditingText(t.id);
+                          }}
+                        >
                           {t.text.split('\n')[0].slice(0, 18) || 'Текст'}
                         </button>
                       ))}
                     </div>
-                    <p className="muted small">{edits.texts.length ? 'Перетаскивайте текст пальцем, нажмите — чтобы изменить.' : 'Надпись появится в центре фото.'}</p>
+                    <p className="muted small">{edits.texts.length ? 'Двигайте пальцем, двумя пальцами — размер и поворот (или ручка в углу). Нажмите ещё раз — изменить текст.' : 'Надпись появится в центре фото.'}</p>
                   </div>
                 )}
 
