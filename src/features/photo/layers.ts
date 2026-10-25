@@ -51,6 +51,12 @@ export interface LayerStack {
   layers: PhotoLayer[];
   /** Объединённое изображение (id файла); слои сохраняются, чтобы можно было разъединить */
   merged: { media: string; w: number; h: number; alpha: boolean } | null;
+  /**
+   * Исходное фото после удаления объектов (id файла, те же пропорции). Слои с media = null
+   * и размытый фон берут его вместо оригинала — так удалённый объект не возвращается
+   * ни в вырезанном объекте, ни в фоне.
+   */
+  photo?: { media: string; w: number; h: number } | null;
 }
 
 export type BgMode = 'original' | 'none' | 'color' | 'blur' | 'image';
@@ -96,7 +102,7 @@ export function withCutout(stack: LayerStack | null, docW: number, docH: number,
   const subject = sourceLayer(docW, docH, { name: 'Объект', role: 'subject', mask });
   if (old >= 0) layers[old] = { ...subject, id: layers[old].id };
   else layers.splice(bgIndex + 1, 0, subject);
-  return { layers, merged: null };
+  return { layers, merged: null, photo: stack?.photo ?? null };
 }
 
 export function backgroundLayer(stack: LayerStack | null): PhotoLayer | null {
@@ -147,7 +153,7 @@ export function addPhoto(stack: LayerStack | null, docW: number, docH: number, m
   const fit = Math.min(0.6, (0.6 * docH * w) / (docW * h));
   const layer = base({ name, kind: 'photo', media, w, h, scale: fit });
   layers.push(layer);
-  return { stack: { layers, merged: null }, id: layer.id };
+  return { stack: { layers, merged: null, photo: stack?.photo ?? null }, id: layer.id };
 }
 
 export function updateLayer(stack: LayerStack, id: string, p: Partial<PhotoLayer>): LayerStack {
@@ -175,7 +181,9 @@ export function duplicateLayer(stack: LayerStack, id: string): { stack: LayerSta
 
 export function removeLayer(stack: LayerStack, id: string): LayerStack | null {
   const layers = stack.layers.filter((l) => l.id !== id);
-  return layers.length ? { ...stack, layers } : null;
+  if (layers.length) return { ...stack, layers };
+  // Фото после удаления объектов не теряем: остаётся слой с ним
+  return stack.photo ? { ...stack, layers: [sourceLayer(stack.photo.w, stack.photo.h)] } : null;
 }
 
 /** Файлы, на которые ссылаются слои */
@@ -187,6 +195,7 @@ export function stackMediaIds(stack: LayerStack | null | undefined): string[] {
     if (l.mask) ids.add(l.mask);
   }
   if (stack.merged) ids.add(stack.merged.media);
+  if (stack.photo) ids.add(stack.photo.media);
   return [...ids];
 }
 
@@ -194,4 +203,25 @@ export function stackMediaIds(stack: LayerStack | null | undefined): string[] {
 export function layerBox(l: PhotoLayer, docW: number, docH: number): { w: number; h: number } {
   if (isFullFrame(l)) return { w: 1, h: 1 };
   return { w: l.scale, h: (l.scale * docW * l.h) / (l.w * docH) };
+}
+
+/** Новый слой из части слоя: то же изображение и положение, маска — выделение */
+export function extractLayer(stack: LayerStack, fromId: string, mask: string, media: string | null, name = 'Объект'): { stack: LayerStack; id: string } {
+  const i = stack.layers.findIndex((l) => l.id === fromId);
+  const src = stack.layers[i];
+  const layer: PhotoLayer = { ...src, id: newId(), role: undefined, name, media, mask, opacity: 1, visible: true };
+  const layers = [...stack.layers];
+  layers.splice(i + 1, 0, layer);
+  return { stack: { ...stack, layers, merged: null }, id: layer.id };
+}
+
+/**
+ * Слой, с которым работает инструмент «Объекты»: выбранное добавленное фото (целое, без маски)
+ * или фото-основа. Вырезанные объекты (слои с маской) не берём: в них видна только часть
+ * изображения, и удаление в невидимой части выглядело бы как «ничего не произошло».
+ */
+export function objectTargetLayer(stack: LayerStack, selected: string | null): PhotoLayer | null {
+  const photos = stack.layers.filter((l) => l.kind === 'photo' && l.visible);
+  const sel = photos.find((l) => l.id === selected && l.media && !l.mask);
+  return sel ?? photos.find((l) => l.role === 'background') ?? photos.find((l) => !l.media && !l.mask) ?? photos.find((l) => !l.media) ?? photos[0] ?? null;
 }

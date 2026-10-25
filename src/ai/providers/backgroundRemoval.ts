@@ -6,7 +6,7 @@
  * поэтому поворот, обрезку и цвет можно менять и после удаления фона.
  */
 import { loadImage, MediaError } from '../../lib/media';
-import { aiAssetsReady, aiManifest, readAiAsset } from '../assets';
+import { aiAssetsReady, aiManifest, packFile, readAiAsset } from '../assets';
 import type { AiProgress, AiProvider } from '../types';
 
 const SIZE = 1024;
@@ -51,9 +51,9 @@ function explain(message: string): string {
 function startWorker(): Promise<Worker> {
   if (ready) return ready;
   ready = (async () => {
-    const files = (await aiManifest()).files;
-    const modelName = files.find((f) => f.name.endsWith('.onnx'))!.name;
-    const wasmName = files.find((f) => f.name.endsWith('.wasm'))!.name;
+    const m = await aiManifest();
+    const modelName = packFile(m, 'segment', 'isnet');
+    const wasmName = packFile(m, 'segment', 'ort-wasm');
     const [model, wasm] = await Promise.all([readAiAsset(modelName), readAiAsset(wasmName)]);
     const w = new Worker(new URL('../segment.worker.ts', import.meta.url), { type: 'module' });
     worker = w;
@@ -167,6 +167,6 @@ export const isnetProvider: AiProvider<Blob, MaskResult> = {
   tool: 'bg-remove',
   kind: 'on-device',
   title: 'ISNet на устройстве',
-  isAvailable: aiAssetsReady,
+  isAvailable: () => aiAssetsReady('segment'),
   run: computeMask,
 };

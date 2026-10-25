@@ -5,8 +5,9 @@ import { useEditorProject } from '../../app/useEditorProject';
 import { deleteMedia, getMedia, newId, putMedia } from '../../lib/db';
 import { loadImage } from '../../lib/media';
 import { useHistory } from '../../lib/useHistory';
-import { aiAssetsReady, downloadAiAssets } from '../../ai/assets';
+import { ensureAiAssets } from '../../ai/assets';
 import { computeMask } from '../../ai/providers/backgroundRemoval';
+import { eraseObject } from '../../ai/providers/objects';
 import type { AiProgress } from '../../ai/types';
 import { prepareDelivery } from '../../lib/deliver';
 import { ImportEmpty } from '../shared/ImportEmpty';
@@ -14,10 +15,11 @@ import { PhotoView } from './PhotoView';
 import { BackgroundPanel } from './BackgroundPanel';
 import { LayersPanel } from './LayersPanel';
 import { MaskBrush } from './MaskBrush';
+import { ObjectTool, type ObjectAction } from './ObjectTool';
 import { TextSheet } from './TextSheet';
 import { ExportSheet } from './ExportSheet';
 import { ASPECTS, FULL, fitAspect, isFull, rotateCropCW, type AspectId } from './geometry';
-import { blobToDataUrl, canvasPixelLimit, composeStack, renderPhoto, stackHasAlpha, type RenderResult } from './render';
+import { blobToDataUrl, canvasPixelLimit, composeStack, makeCanvas, renderPhoto, stackHasAlpha, type RenderResult } from './render';
 import { DEFAULT_EDITS, PRESETS, blurredBackdrop, editMediaIds, isEdited, normalizeEdits, temperatureLayer, toCssFilter, type CropRect, type PhotoEdits, type TextLayer } from './pipeline';
 import {
   NEUTRAL_ADJUST,
@@ -25,9 +27,12 @@ import {
   backgroundLayer,
   bgModeOf,
   duplicateLayer,
+  extractLayer,
   moveLayer,
+  objectTargetLayer,
   removeLayer,
   setBackground,
+  sourceLayer,
   updateLayer,
   withCutout,
   type Adjust,
@@ -60,6 +65,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   const [adjustAll, setAdjustAll] = useState(false);
   const [brushing, setBrushing] = useState<string | null>(null);
+  const [objects, setObjects] = useState(tool === 'objects');
   const loadedFor = useRef<string | null>(null);
 
   useEffect(() => prepareDelivery(), []);
@@ -153,8 +159,14 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     blobs.current.set(id, b);
     known.current.add(id);
     if (persisted) await putMedia(id, b);
+    setFiles((f) => ({ ...f, [id]: URL.createObjectURL(b) }));
     return id;
   };
+
+  // Фото-основа: оригинал или он же после удаления объектов
+  const docMedia = stack?.photo?.media ?? null;
+  const docUrl = docMedia ? files[docMedia] ?? null : url;
+  const docBlob = docMedia ? blobs.current.get(docMedia) ?? null : blob;
 
   const blobFiles = (): Record<string, Blob> => {
     const out: Record<string, Blob> = {};
@@ -171,12 +183,12 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   const blurAmount = blurLayer?.blur ?? null;
   const [blurUrl, setBlurUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (blurAmount == null || !url || !srcW) return;
+    if (blurAmount == null || !docUrl || !srcW) return;
     let cancelled = false;
     let made: string | null = null;
     const t = setTimeout(async () => {
       try {
-        const img = await loadImage(url);
+        const img = await loadImage(docUrl);
         if (cancelled) return;
         const c = blurredBackdrop(img, srcW, srcH, blurAmount);
         const b = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', 0.9));
@@ -194,19 +206,16 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
       if (made) URL.revokeObjectURL(made);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blurAmount, url, srcW]);
+  }, [blurAmount, docUrl, srcW]);
 
   /* ---------- Удалить фон: одна кнопка ---------- */
   const removeBackground = async () => {
-    if (!blob || !srcW) return;
+    if (!docBlob || !srcW) return;
     const ctrl = new AbortController();
     const show = (p: AiProgress) => ui.setProgress({ ...p, onCancel: () => ctrl.abort() });
     try {
-      if (!(await aiAssetsReady())) {
-        show({ value: 0, label: 'Скачиваю модель (один раз)…' });
-        await downloadAiAssets(show, ctrl.signal);
-      }
-      const r = await computeMask(blob, show, ctrl.signal);
+      await ensureAiAssets('segment', show, ctrl.signal);
+      const r = await computeMask(docBlob, show, ctrl.signal);
       const id = await storeFile(r.mask);
       const next = withCutout(stack ? { ...stack, merged: null } : null, srcW, srcH, id);
       hist.apply((e) => ({ ...e, stack: next }));
@@ -267,6 +276,101 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
       ui.toast('Слои объединены. «Разъединить» вернёт их', 'ok');
     } catch (e) {
       ui.toast((e as Error).message, 'error');
+    } finally {
+      ui.setProgress(null);
+    }
+  };
+
+  /* ---------- Объекты: удалить, в слой, перенести ---------- */
+  // С чем работает инструмент: объединённое фото, слой или фото-основа
+  const objLayer = stack && !stack.merged ? objectTargetLayer(stack, selectedLayer) : null;
+  const objTarget = stack?.merged
+    ? { key: stack.merged.media, url: files[stack.merged.media] ?? null, label: 'Меняется: объединённое фото.' }
+    : objLayer?.media
+      ? { key: objLayer.media, url: files[objLayer.media] ?? null, label: `Меняется: слой «${objLayer.name}».` }
+      : { key: `doc:${docMedia ?? meta?.id}`, url: docUrl, label: stack ? `Меняется: слой «${objLayer?.name ?? 'Фото'}».` : 'Меняется: всё фото.' };
+
+  const openObjects = () => {
+    if (stack && !stack.merged && !objLayer) {
+      ui.toast('Нет слоя с фото: сделайте видимым фон или добавьте фото.', 'error');
+      return;
+    }
+    setObjects(true);
+  };
+
+  const applyObject = async (action: ObjectAction, selection: HTMLCanvasElement) => {
+    if (!objTarget.url || !srcW) return;
+    const ctrl = new AbortController();
+    const show = (p: AiProgress) => ui.setProgress({ ...p, onCancel: () => ctrl.abort() });
+    show({ value: null, label: 'Готовлю фото…' });
+    try {
+      const img = await loadImage(objTarget.url);
+      const k = Math.min(1, Math.sqrt(canvasPixelLimit() / (img.naturalWidth * img.naturalHeight)));
+      const W = Math.max(1, Math.round(img.naturalWidth * k));
+      const H = Math.max(1, Math.round(img.naturalHeight * k));
+
+      // Маска нового слоя — выделение в размере изображения (не больше 2048)
+      let maskId: string | null = null;
+      if (action !== 'remove') {
+        const mk = Math.min(1, 2048 / Math.max(W, H));
+        const [mc, mctx] = makeCanvas(Math.round(W * mk), Math.round(H * mk), true);
+        mctx.drawImage(selection, 0, 0, mc.width, mc.height);
+        const mb = await new Promise<Blob | null>((r) => mc.toBlob(r, 'image/png'));
+        mc.width = mc.height = 1;
+        if (!mb) throw new Error('Не удалось сохранить выделение.');
+        maskId = await storeFile(mb);
+      }
+
+      // Удаление: новое изображение с дорисованным фоном
+      let erased: { id: string; w: number; h: number; ms: number } | null = null;
+      if (action !== 'layer') {
+        const r = await eraseObject(img, W, H, selection, show, ctrl.signal);
+        const png = (blobs.current.get(objTarget.key) ?? docBlob)?.type === 'image/png';
+        const b = await new Promise<Blob | null>((res) => r.canvas.toBlob(res, png ? 'image/png' : 'image/jpeg', 0.95));
+        r.canvas.width = r.canvas.height = 1;
+        if (!b) throw new Error('Не удалось сохранить фото.');
+        erased = { id: await storeFile(b), w: W, h: H, ms: r.ms };
+      }
+
+      // «Перенести» с фото-основы: объект должен остаться из фото до удаления, а слой без
+      // своего файла показывал бы уже новое фото — поэтому оригинал сохраняем отдельным файлом
+      let docBefore: { media: string; w: number; h: number } | null = editsRef.current.stack?.photo ?? null;
+      if (action === 'move' && !docBefore && !objLayer?.media && !stack?.merged && blob) docBefore = { media: await storeFile(blob), w: srcW, h: srcH };
+
+      // Новое состояние считаем от текущих правок (после await) и применяем одним шагом отмены
+      const e = editsRef.current;
+      let newLayer: string | null = null;
+      let s = e.stack;
+      if (s?.merged) {
+        if (erased) s = { ...s, merged: { ...s.merged, media: erased.id, w: erased.w, h: erased.h } };
+      } else {
+        if (!s) s = { layers: [sourceLayer(srcW, srcH)], merged: null, photo: null };
+        const target = objectTargetLayer(s, selectedLayer)!;
+        const before = target.media;
+        if (maskId) {
+          // Вынесенный объект — из изображения до удаления
+          const r = extractLayer(s, target.id, maskId, before);
+          s = r.stack;
+          newLayer = r.id;
+          if (!before && erased && docBefore) s = updateLayer(s, r.id, { media: docBefore.media, w: docBefore.w, h: docBefore.h });
+        }
+        if (erased) {
+          // Фото-основу меняем целиком (через stack.photo), отдельное изображение — в самом слое
+          s = before ? updateLayer(s, target.id, { media: erased.id, w: erased.w, h: erased.h }) : { ...s, photo: { media: erased.id, w: erased.w, h: erased.h } };
+        }
+      }
+      const next = s;
+      hist.apply((cur) => ({ ...cur, stack: next }));
+      if (newLayer) {
+        setSelectedLayer(newLayer);
+        setObjects(false);
+        setPanel('layers');
+        ui.toast(action === 'move' ? 'Объект перенесён в слой — двигайте его пальцем' : 'Объект скопирован в отдельный слой', 'ok');
+      } else if (erased) {
+        ui.toast(`Объект удалён за ${(erased.ms / 1000).toFixed(1)} с`, 'ok');
+      }
+    } catch (e) {
+      if ((e as DOMException)?.name !== 'AbortError') ui.toast((e as Error).message || 'Не получилось', 'error');
     } finally {
       ui.setProgress(null);
     }
@@ -398,14 +502,23 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   return (
     <div className="screen screen-fixed editor">
       <TopBar
-        title={cropping ? 'Обрезка' : brushLayer ? 'Кисть и ластик' : 'Редактор фото'}
-        onBack={cropping ? () => setCropping(null) : brushLayer ? () => setBrushing(null) : undefined}
+        title={cropping ? 'Обрезка' : brushLayer ? 'Кисть и ластик' : objects ? 'Объекты' : 'Редактор фото'}
+        onBack={cropping ? () => setCropping(null) : brushLayer ? () => setBrushing(null) : objects ? () => setObjects(false) : undefined}
         action={
           cropping ? (
             <button className="btn btn-primary btn-sm" onClick={applyCrop}>
               Готово
             </button>
-          ) : brushLayer ? null : (
+          ) : brushLayer ? null : objects ? (
+            <div className="topbar-group">
+              <button className="icon-btn icon-btn-sm" onClick={hist.undo} disabled={!hist.canUndo} aria-label="Отменить">
+                <Icon name="undo" size={20} />
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={() => setObjects(false)}>
+                Готово
+              </button>
+            </div>
+          ) : (
             <div className="topbar-group">
               <button className="icon-btn icon-btn-sm" onClick={hist.undo} disabled={!hist.canUndo} aria-label="Отменить">
                 <Icon name="undo" size={20} />
@@ -421,10 +534,25 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
         }
       />
 
-      {brushLayer && url ? (
+      {objects ? (
+        objTarget.url ? (
+          <ObjectTool
+            key={objTarget.url}
+            url={objTarget.url}
+            imageKey={objTarget.key}
+            targetLabel={objTarget.label}
+            canLayer={!stack?.merged}
+            onApply={applyObject}
+          />
+        ) : (
+          <div className="photo-stage">
+            <div className="skeleton fill" />
+          </div>
+        )
+      ) : brushLayer && docUrl ? (
         <MaskBrush
           layer={brushLayer}
-          srcUrl={url}
+          srcUrl={docUrl}
           files={files}
           blobs={blobs.current}
           docW={srcW}
@@ -441,7 +569,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
         <>
           <div className="photo-stage">
             <PhotoView
-              url={url}
+              url={docUrl}
               srcW={srcW}
               srcH={srcH}
               edits={edits}
@@ -498,10 +626,20 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
             </div>
           ) : (
             <>
-              <nav className="toolbar toolbar-top" aria-label="Инструменты фото">
-                <button className="tool" onClick={startCrop}>
-                  <Icon name="crop" size={24} />
-                  <span>Обрезать</span>
+              <nav className="toolbar toolbar-top toolbar-scroll" aria-label="Инструменты фото">
+                <button className={`tool ${panel === 'background' ? 'is-active' : ''}`} onClick={() => setPanel('background')}>
+                  <Icon name="cutout" size={24} />
+                  <span>Фон</span>
+                  <i className="tool-dot tool-dot-ai" aria-hidden="true" />
+                </button>
+                <button className="tool" onClick={openObjects}>
+                  <Icon name="target" size={24} />
+                  <span>Объекты</span>
+                  <i className="tool-dot tool-dot-ai" aria-hidden="true" />
+                </button>
+                <button className={`tool ${panel === 'layers' ? 'is-active' : ''}`} onClick={() => setPanel('layers')}>
+                  <Icon name="layers" size={24} />
+                  <span>Слои</span>
                 </button>
                 <button className={`tool ${panel === 'filters' ? 'is-active' : ''}`} onClick={() => setPanel('filters')}>
                   <Icon name="filters" size={24} />
@@ -511,18 +649,13 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
                   <Icon name="sliders" size={24} />
                   <span>Настройки</span>
                 </button>
+                <button className="tool" onClick={startCrop}>
+                  <Icon name="crop" size={24} />
+                  <span>Обрезать</span>
+                </button>
                 <button className="tool" onClick={rotate}>
                   <Icon name="rotate" size={24} />
                   <span>Поворот</span>
-                </button>
-                <button className={`tool ${panel === 'background' ? 'is-active' : ''}`} onClick={() => setPanel('background')}>
-                  <Icon name="cutout" size={24} />
-                  <span>Фон</span>
-                  <i className="tool-dot tool-dot-ai" aria-hidden="true" />
-                </button>
-                <button className={`tool ${panel === 'layers' ? 'is-active' : ''}`} onClick={() => setPanel('layers')}>
-                  <Icon name="layers" size={24} />
-                  <span>Слои</span>
                 </button>
                 <button className={`tool ${panel === 'text' ? 'is-active' : ''}`} onClick={() => setPanel('text')}>
                   <Icon name="text" size={24} />
@@ -608,7 +741,8 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
                       setStack((s) => {
                         if (!s) return s;
                         const rest = s.layers.filter((l) => l.role !== 'subject' && l.role !== 'background');
-                        return rest.length ? { layers: [{ ...backgroundLayer(setBackground(s, srcW, srcH, 'original'))!, role: undefined, name: 'Фото' }, ...rest], merged: null } : null;
+                        const base = { ...backgroundLayer(setBackground(s, srcW, srcH, 'original'))!, role: undefined, name: 'Фото' };
+                        return rest.length || s.photo ? { layers: [base, ...rest], merged: null, photo: s.photo ?? null } : null;
                       })
                     }
                   />
@@ -619,7 +753,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
                     stack={stack}
                     selected={selectedLayer}
                     files={files}
-                    srcUrl={url}
+                    srcUrl={docUrl}
                     blurUrl={blurUrl}
                     onSelect={setSelectedLayer}
                     onUpdate={(id, p, end) => setStackLive((s) => updateLayer(s, id, p), end)}

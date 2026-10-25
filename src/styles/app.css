@@ -2393,3 +2393,67 @@ button.row:active,
 .topbar-group .icon-btn:disabled {
   opacity: 0.35;
 }
+
+/* Панель инструментов фото листается: восемь инструментов не помещаются на узком экране */
+.toolbar-scroll {
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.toolbar-scroll::-webkit-scrollbar {
+  display: none;
+}
+.toolbar-scroll .tool {
+  flex: 0 0 64px;
+}
+.toolbar.toolbar-top.toolbar-scroll .tool span {
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+}
+
+/* Инструмент «Объекты» */
+.obj-busy {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: var(--fs-small, 0.8125rem);
+  font-weight: 600;
+  pointer-events: none;
+}
+.obj-busy .spinner {
+  width: 16px;
+  height: 16px;
+}
+.obj-target {
+  color: var(--text);
+  font-weight: 600;
+}
+.obj-actions {
+  display: flex;
+  gap: 8px;
+}
+.obj-actions .btn {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.obj-reset {
+  display: inline;
+  padding: 0;
+  font-size: inherit;
+}
+.pill-sm {
+  padding: 6px 14px;
+  min-height: 34px;
+}

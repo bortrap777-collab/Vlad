@@ -10,7 +10,7 @@
  * Пока ни один провайдер не зарегистрирован, инструмент честно показывает
  * статус «не подключено» и не выполняет никаких действий.
  */
-export type AiToolId = 'bg-remove' | 'bg-replace' | 'enhance' | 'captions' | 'smart-edit';
+export type AiToolId = 'bg-remove' | 'bg-replace' | 'object-select' | 'object-erase' | 'enhance' | 'captions' | 'smart-edit';
 export type ProviderKind = 'on-device' | 'server' | 'api';
 
 export interface AiProgress {

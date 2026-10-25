@@ -4,8 +4,16 @@ import { Icon } from '../../components/Icon';
 import { useNav } from '../../app/nav';
 import { formatBytes } from '../../lib/format';
 import { AI_TOOLS, toolState, type ToolState } from '../../ai/registry';
-import { aiAssetsReady, aiManifest, deleteAiAssets, downloadAiAssets, totalSize } from '../../ai/assets';
+import { aiAssetsReady, aiManifest, deleteAiAssets, downloadAiAssets, packSize, type AiPack } from '../../ai/assets';
 import type { AiToolId, AiToolSpec, ProviderKind } from '../../ai/types';
+
+const MODELS: { pack: AiPack; title: string; icon: string; tool: string }[] = [
+  { pack: 'segment', title: 'Фон · ISNet', icon: 'cutout', tool: 'background' },
+  { pack: 'select', title: 'Выделение · MobileSAM', icon: 'target', tool: 'objects' },
+  { pack: 'erase', title: 'Удаление · MI-GAN', icon: 'eraser', tool: 'objects' },
+];
+
+const TOOL_SCREEN: Partial<Record<AiToolId, string>> = { 'bg-remove': 'background', 'bg-replace': 'background', 'object-select': 'objects', 'object-erase': 'objects' };
 
 const KIND_LABEL: Record<ProviderKind, string> = {
   'on-device': 'На устройстве',
@@ -31,24 +39,24 @@ export function AiToolsScreen() {
   const nav = useNav();
   const [open, setOpen] = useState<AiToolSpec | null>(null);
   const [states, setStates] = useState<Partial<Record<AiToolId, ToolState>>>({});
-  const [model, setModel] = useState<{ ready: boolean; size: number | null } | null>(null);
+  const [models, setModels] = useState<Partial<Record<AiPack, { ready: boolean; size: number | null }>>>({});
 
   const refresh = useCallback(async () => {
     const entries = await Promise.all(AI_TOOLS.map(async (t) => [t.id, await toolState(t.id)] as const));
     setStates(Object.fromEntries(entries));
-    const ready = await aiAssetsReady();
-    const size = await aiManifest().then(totalSize, () => null);
-    setModel({ ready, size });
+    const m = await aiManifest().catch(() => null);
+    const list = await Promise.all(MODELS.map(async (x) => [x.pack, { ready: await aiAssetsReady(x.pack), size: m ? packSize(m, x.pack) : null }] as const));
+    setModels(Object.fromEntries(list));
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  const download = async () => {
+  const download = async (pack: AiPack) => {
     const ctrl = new AbortController();
     try {
-      await downloadAiAssets((p) => ui.setProgress({ ...p, onCancel: () => ctrl.abort() }), ctrl.signal);
+      await downloadAiAssets(pack, (p) => ui.setProgress({ ...p, onCancel: () => ctrl.abort() }), ctrl.signal);
       ui.toast('Модель скачана и работает без интернета', 'ok');
     } catch (e) {
       if ((e as DOMException)?.name !== 'AbortError') ui.toast((e as Error).message, 'error');
@@ -58,8 +66,8 @@ export function AiToolsScreen() {
     }
   };
 
-  const remove = async () => {
-    await deleteAiAssets().catch(() => undefined);
+  const remove = async (pack: AiPack) => {
+    await deleteAiAssets(pack).catch(() => undefined);
     ui.toast('Модель удалена с устройства', 'ok');
     refresh();
   };
@@ -74,7 +82,7 @@ export function AiToolsScreen() {
         <div className="notice">
           <Icon name="info" size={20} />
           <p>
-            Удаление и замена фона работают прямо на телефоне, без сервера. Остальным инструментам нужен внешний сервис — пока он не подключён,
+            Удаление и замена фона, выделение и удаление объектов работают прямо на телефоне, без сервера. Остальным инструментам нужен внешний сервис — пока он не подключён,
             инструмент ничего не обрабатывает и не показывает поддельный результат.
           </p>
         </div>
@@ -99,26 +107,30 @@ export function AiToolsScreen() {
 
         <h2 className="group-title">Модели на устройстве</h2>
         <div className="group">
-          <div className="row row-tall">
-            <span className="row-icon ai-icon ai-photo">
-              <Icon name="cutout" size={22} />
-            </span>
-            <span className="row-body">
-              <span className="row-title">Фон · ISNet</span>
-              <span className="row-sub">
-                {model == null ? 'Проверяю…' : model.ready ? `Скачана${model.size ? ` · ${formatBytes(model.size)}` : ''} · работает офлайн` : `Не скачана${model.size ? ` · ${formatBytes(model.size)}` : ''}`}
-              </span>
-            </span>
-            {model?.ready ? (
-              <button className="btn btn-soft btn-sm" onClick={remove}>
-                Удалить
-              </button>
-            ) : (
-              <button className="btn btn-primary btn-sm" onClick={download} disabled={!model}>
-                Скачать
-              </button>
-            )}
-          </div>
+          {MODELS.map((x) => {
+            const st = models[x.pack];
+            const size = st?.size ? ` · ${formatBytes(st.size)}` : '';
+            return (
+              <div key={x.pack} className="row row-tall">
+                <span className="row-icon ai-icon ai-photo">
+                  <Icon name={x.icon} size={22} />
+                </span>
+                <span className="row-body">
+                  <span className="row-title">{x.title}</span>
+                  <span className="row-sub">{st == null ? 'Проверяю…' : st.ready ? `Скачана${size} · работает офлайн` : `Не скачана${size}`}</span>
+                </span>
+                {st?.ready ? (
+                  <button className="btn btn-soft btn-sm" onClick={() => remove(x.pack)}>
+                    Удалить
+                  </button>
+                ) : (
+                  <button className="btn btn-primary btn-sm" onClick={() => download(x.pack)} disabled={!st}>
+                    Скачать
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -148,13 +160,14 @@ export function AiToolsScreen() {
             ) : (
               <>
                 <p className="muted small">
-                  {openState === 'ready' ? 'Модель на устройстве.' : 'Модель скачается при первом использовании.'} В редакторе фото: инструмент «Фон».
+                  {openState === 'ready' ? 'Модель на устройстве.' : 'Модель скачается при первом использовании.'} В редакторе фото: инструмент «
+                  {TOOL_SCREEN[open.id] === 'objects' ? 'Объекты' : 'Фон'}».
                 </p>
                 <button
                   className="btn btn-primary btn-block"
                   onClick={() => {
                     setOpen(null);
-                    nav.push({ name: 'photo', tool: 'background' });
+                    nav.push({ name: 'photo', tool: TOOL_SCREEN[open.id] ?? 'background' });
                   }}
                 >
                   <Icon name="photo" size={20} /> Выбрать фото

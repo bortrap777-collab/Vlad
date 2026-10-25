@@ -197,7 +197,7 @@ export function outputGeometry(srcW: number, srcH: number, e: PhotoEdits) {
   return { rw, rh, crop: c, cw: Math.max(1, Math.round(c.w * rw)), ch: Math.max(1, Math.round(c.h * rh)) };
 }
 
-function makeCanvas(w: number, h: number, read = false): [HTMLCanvasElement, CanvasRenderingContext2D] {
+export function makeCanvas(w: number, h: number, read = false): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
@@ -234,6 +234,8 @@ export async function composeStack(
   };
   const [out, octx] = makeCanvas(cw, ch);
   try {
+    // Фото после удаления объектов заменяет оригинал во всех слоях
+    const doc = stack.photo ? await image(stack.photo.media) : src;
     if (stack.merged) {
       octx.drawImage(await image(stack.merged.media), 0, 0, cw, ch);
       return out;
@@ -250,11 +252,11 @@ export async function composeStack(
         lctx.fillStyle = l.color;
         lctx.fillRect(0, 0, cw, ch);
       } else if (l.kind === 'blur') {
-        const b = blurredBackdrop(src, W0, H0, l.blur);
+        const b = blurredBackdrop(doc, W0, H0, l.blur);
         lctx.drawImage(b, 0, 0, cw, ch);
         b.width = b.height = 1;
       } else {
-        const im = l.media ? await image(l.media) : src;
+        const im = l.media ? await image(l.media) : doc;
         const box = layerBox(l, W0, H0);
         const lw = box.w * cw;
         const lh = box.h * ch;

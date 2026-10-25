@@ -192,6 +192,7 @@ export function remapEditIds<T extends Partial<PhotoEdits> & { background?: Lega
       ? {
           layers: e.stack.layers.map((l) => ({ ...l, media: m(l.media), mask: m(l.mask) })),
           merged: e.stack.merged ? { ...e.stack.merged, media: idFor(e.stack.merged.media) } : null,
+          photo: e.stack.photo ? { ...e.stack.photo, media: idFor(e.stack.photo.media) } : null,
         }
       : e.stack,
   };

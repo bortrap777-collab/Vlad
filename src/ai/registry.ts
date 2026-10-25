@@ -1,3 +1,4 @@
+import { aiAssetsReady } from './assets';
 import { isnetProvider } from './providers/backgroundRemoval';
 import type { AiProvider, AiToolId, AiToolSpec } from './types';
 
@@ -20,6 +21,26 @@ export const AI_TOOLS: AiToolSpec[] = [
     icon: 'layers',
     media: 'photo',
     requirements: [{ kind: 'on-device', title: 'Та же модель, что и удаление фона', detail: 'Модель находит объект, а фон заменяется прямо в редакторе: прозрачный, цвет, размытие или своё фото. Поворот, обрезку и фильтры можно менять и после.' }],
+  },
+  {
+    id: 'object-select',
+    title: 'Выделение касанием',
+    description: 'Коснитесь объекта — выделится он или его часть: лицо, голова, человек целиком.',
+    icon: 'target',
+    media: 'photo',
+    requirements: [
+      { kind: 'on-device', title: 'Модель MobileSAM на устройстве', detail: 'Энкодер 28 МБ и декодер масок 16,5 МБ. Фото «изучается» один раз (несколько секунд), дальше каждое касание — доли секунды. Работает без интернета, фото никуда не отправляется.' },
+    ],
+  },
+  {
+    id: 'object-erase',
+    title: 'Удаление объектов',
+    description: 'Убирает выделенное и дорисовывает фон на его месте.',
+    icon: 'eraser',
+    media: 'photo',
+    requirements: [
+      { kind: 'on-device', title: 'Модель MI-GAN на устройстве', detail: 'Модель Picsart AI Research, 28 МБ. Дорисовывает участок вокруг объекта, остальное фото не меняется. Небольшие объекты убирает чисто; на больших участках фон бывает размытым или с повторами.' },
+    ],
   },
   {
     id: 'enhance',
@@ -60,6 +81,9 @@ const providers: AiProvider[] = [
   isnetProvider as AiProvider,
   // Замена фона — та же модель сегментации; сама композиция делается в фоторедакторе.
   { ...(isnetProvider as AiProvider), tool: 'bg-replace' },
+  // Сами вызовы моделей — в providers/objects.ts, инструмент «Объекты» фоторедактора
+  { id: 'mobilesam-on-device', tool: 'object-select', kind: 'on-device', title: 'MobileSAM на устройстве', isAvailable: () => aiAssetsReady('select'), run: () => Promise.reject(new Error('Используется в редакторе фото')) },
+  { id: 'migan-on-device', tool: 'object-erase', kind: 'on-device', title: 'MI-GAN на устройстве', isAvailable: () => aiAssetsReady('erase'), run: () => Promise.reject(new Error('Используется в редакторе фото')) },
 ];
 
 export function registerProvider(p: AiProvider): void {
