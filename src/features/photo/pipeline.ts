@@ -32,6 +32,22 @@ export interface TextLayer {
   style: TextStyle;
 }
 
+export type BackgroundMode = 'transparent' | 'color' | 'blur' | 'image';
+
+/** Замена фона по маске от ИИ (маска и картинка фона — отдельные файлы проекта). */
+export interface BackgroundEdit {
+  /** id файла маски: PNG, прозрачность = фон, в ориентации исходного фото */
+  mask: string;
+  mode: BackgroundMode;
+  color: string;
+  /** Сила размытия 0…1 */
+  blur: number;
+  /** id файла картинки фона */
+  image: string | null;
+}
+
+export const BG_COLORS = ['#FFFFFF', '#111111', '#8366FF', '#E9E4FF', '#FFD84D', '#FF6FA3', '#4C9BFF', '#2FCB8A'];
+
 export interface PhotoEdits {
   preset: PresetId;
   /** -100…100 */
@@ -43,6 +59,7 @@ export interface PhotoEdits {
   rotation: number;
   crop: CropRect | null;
   texts: TextLayer[];
+  background: BackgroundEdit | null;
 }
 
 export type PresetId = 'original' | 'vivid' | 'warm' | 'cool' | 'mono' | 'film';
@@ -76,6 +93,7 @@ export const DEFAULT_EDITS: PhotoEdits = {
   rotation: 0,
   crop: null,
   texts: [],
+  background: null,
 };
 
 export const TEXT_FONTS: Record<TextFont, { name: string; family: string; weight: number }> = {
@@ -146,9 +164,68 @@ export function isEdited(e: PhotoEdits): boolean {
   return JSON.stringify(normalizeEdits(e)) !== JSON.stringify(DEFAULT_EDITS);
 }
 
-/** Старые проекты (этап 1) не знают про crop и texts — дополняем. */
+/** Старые проекты не знают про crop, texts и background — дополняем. */
 export function normalizeEdits(e: Partial<PhotoEdits> | undefined): PhotoEdits {
-  return { ...DEFAULT_EDITS, ...e, crop: e?.crop ?? null, texts: e?.texts ?? [] };
+  return { ...DEFAULT_EDITS, ...e, crop: e?.crop ?? null, texts: e?.texts ?? [], background: e?.background ?? null };
+}
+
+/** Файлы проекта, на которые ссылаются правки (кроме исходника). */
+export function editMediaIds(e: Partial<PhotoEdits> | undefined): string[] {
+  const b = e?.background;
+  if (!b) return [];
+  return b.image ? [b.mask, b.image] : [b.mask];
+}
+
+/**
+ * Размытый фон: исходник уменьшается до 512 px и размывается тремя проходами
+ * box-blur (≈ гаусс). Одна и та же функция готовит предпросмотр и итоговый файл,
+ * поэтому они совпадают; ctx.filter не используется (его нет в старых Safari).
+ */
+export function blurredBackdrop(img: CanvasImageSource, w: number, h: number, amount: number): HTMLCanvasElement {
+  const k = Math.min(1, 512 / Math.max(w, h));
+  const bw = Math.max(1, Math.round(w * k));
+  const bh = Math.max(1, Math.round(h * k));
+  const c = document.createElement('canvas');
+  c.width = bw;
+  c.height = bh;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, bw, bh);
+  const r = Math.round(1 + Math.max(0, Math.min(1, amount)) * Math.max(bw, bh) * 0.035);
+  const data = ctx.getImageData(0, 0, bw, bh);
+  for (let pass = 0; pass < 3; pass++) {
+    boxBlur(data.data, bw, bh, r, true);
+    boxBlur(data.data, bw, bh, r, false);
+  }
+  ctx.putImageData(data, 0, 0);
+  return c;
+}
+
+function boxBlur(d: Uint8ClampedArray, w: number, h: number, r: number, horizontal: boolean): void {
+  const len = horizontal ? w : h;
+  const lines = horizontal ? h : w;
+  const step = horizontal ? 4 : w * 4;
+  const buf = new Float32Array(len * 3);
+  for (let l = 0; l < lines; l++) {
+    const base = horizontal ? l * w * 4 : l * 4;
+    for (let i = 0; i < len; i++) {
+      const o = base + i * step;
+      buf[i * 3] = d[o];
+      buf[i * 3 + 1] = d[o + 1];
+      buf[i * 3 + 2] = d[o + 2];
+    }
+    // Края продолжаются крайним пикселем
+    const at = (i: number, ch: number) => buf[(i < 0 ? 0 : i >= len ? len - 1 : i) * 3 + ch];
+    for (let ch = 0; ch < 3; ch++) {
+      let sum = 0;
+      for (let i = -r; i <= r; i++) sum += at(i, ch);
+      for (let i = 0; i < len; i++) {
+        d[base + i * step + ch] = sum / (2 * r + 1);
+        sum += at(i + r + 1, ch) - at(i - r, ch);
+      }
+    }
+  }
 }
 
 /**

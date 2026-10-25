@@ -16,13 +16,21 @@ interface Props {
   onTextMove?: (id: string, x: number, y: number) => void;
   onTextTap?: (id: string) => void;
   onMediaError?: () => void;
+  /** Замена фона: object URL маски, картинки фона и размытого фона */
+  layers?: BackgroundLayers;
+}
+
+export interface BackgroundLayers {
+  mask: string | null;
+  bgImage: string | null;
+  blur: string | null;
 }
 
 /**
  * Предпросмотр фото. Геометрия считается так же, как в рендере (render.ts):
  * повёрнутое изображение → окно обрезки → вписывание в экран.
  */
-export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText, onTextMove, onTextTap, onMediaError }: Props) {
+export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText, onTextMove, onTextTap, onMediaError, layers }: Props) {
   const [stageRef, stage] = useElementSize<HTMLDivElement>();
   const quarter = edits.rotation % 180 !== 0;
   const rw = quarter ? srcH : srcW;
@@ -46,6 +54,21 @@ export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText,
   };
   const imgW = (quarter ? rh : rw) * k;
   const imgH = (quarter ? rw : rh) * k;
+  const rotStyle: CSSProperties = { width: imgW, height: imgH, transform: `translate(-50%, -50%) rotate(${edits.rotation}deg)` };
+
+  // Замена фона: объект вырезается маской (та же маска, что и в рендере)
+  const bg = edits.background && layers?.mask ? edits.background : null;
+  const alpha = !!bg && (bg.mode === 'transparent' || (bg.mode === 'image' && !layers?.bgImage));
+  const maskStyle: CSSProperties = bg
+    ? {
+        WebkitMaskImage: `url("${layers!.mask}")`,
+        maskImage: `url("${layers!.mask}")`,
+        WebkitMaskSize: '100% 100%',
+        maskSize: '100% 100%',
+        WebkitMaskRepeat: 'no-repeat',
+        maskRepeat: 'no-repeat',
+      }
+    : {};
 
   return (
     <div className="photo-stage-inner" ref={stageRef}>
@@ -53,19 +76,20 @@ export function PhotoView({ url, srcW, srcH, edits, loading, crop, selectedText,
       {url && k > 0 && (
         <div className={`photo-canvas ${crop ? 'is-cropping' : ''}`} style={{ width: dw, height: dh }}>
           <div className="photo-box" style={boxStyle}>
-            <img
-              src={url}
-              alt=""
-              draggable={false}
-              onError={onMediaError}
-              style={{
-                width: imgW,
-                height: imgH,
-                filter,
-                transform: `translate(-50%, -50%) rotate(${edits.rotation}deg)`,
-              }}
-            />
-            {temp && <div className="temp-layer" style={{ background: temp.color, opacity: temp.opacity }} />}
+            {alpha && <div className="checker" aria-hidden="true" />}
+            {/* Цветокоррекция действует на всю композицию — как в рендере */}
+            <div className="photo-composite" style={{ filter }}>
+              {bg?.mode === 'color' && <div className="bg-fill" style={{ background: bg.color }} />}
+              {bg?.mode === 'image' && layers?.bgImage && <div className="bg-fill" style={{ backgroundImage: `url("${layers.bgImage}")` }} />}
+              {bg?.mode === 'blur' && layers?.blur && <img className="ph-layer" src={layers.blur} alt="" draggable={false} style={rotStyle} />}
+              <img className="ph-layer" src={url} alt="" draggable={false} onError={onMediaError} style={{ ...rotStyle, ...maskStyle }} />
+            </div>
+            {temp && (
+              <div
+                className={`temp-layer ${alpha ? 'ph-layer' : ''}`}
+                style={{ background: temp.color, opacity: temp.opacity, ...(alpha ? { ...rotStyle, ...maskStyle } : null) }}
+              />
+            )}
           </div>
 
           {!crop &&

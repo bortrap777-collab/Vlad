@@ -2,7 +2,7 @@
    Стратегия «сначала сеть»: при подключении всегда загружается свежая версия
    приложения, кэш используется только офлайн. Шрифты — из кэша (они не меняются).
    Медиа пользователя хранится в IndexedDB и сюда не попадает. */
-const CACHE = 'w-studio-shell-v3';
+const CACHE = 'w-studio-shell-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
@@ -30,7 +30,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('w-studio-shell') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -54,6 +54,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.origin !== self.location.origin) return;
+  // Модели ИИ (десятки МБ) приложение хранит само, в отдельном кэше — здесь не дублируем
+  if (url.pathname.includes('/ai/')) return;
 
   // Свои файлы: сеть (с проверкой свежести, мимо HTTP-кэша), при отсутствии сети — кэш
   event.respondWith(

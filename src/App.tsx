@@ -16,7 +16,7 @@ function renderRoute(r: Route) {
     case 'video':
       return <VideoEditorScreen projectId={r.projectId} />;
     case 'photo':
-      return <PhotoEditorScreen projectId={r.projectId} />;
+      return <PhotoEditorScreen projectId={r.projectId} tool={r.tool} />;
     case 'ai':
       return <AiToolsScreen />;
     case 'projects':

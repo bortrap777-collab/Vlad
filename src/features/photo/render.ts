@@ -4,7 +4,7 @@
  * прогресс передаётся наружу.
  */
 import { loadImage, MediaError } from '../../lib/media';
-import { applyAdjustments, pixelParams, TEXT_FONTS, type PhotoEdits, type PixelParams, type TextLayer } from './pipeline';
+import { applyAdjustments, blurredBackdrop, pixelParams, TEXT_FONTS, type PhotoEdits, type PixelParams, type TextLayer } from './pipeline';
 
 export interface RenderResult {
   blob: Blob;
@@ -25,6 +25,27 @@ export interface RenderOptions {
   quality?: number;
   useWorker?: boolean;
   onProgress?: (value: number, label: string) => void;
+  /** Файлы для замены фона (маска и картинка фона) */
+  assets?: PhotoAssets;
+}
+
+export interface PhotoAssets {
+  mask?: Blob | null;
+  bgImage?: Blob | null;
+}
+
+/** Нужна ли прозрачность в итоговом файле (JPEG её не поддерживает). */
+export function needsAlpha(e: PhotoEdits): boolean {
+  const b = e.background;
+  return !!b && (b.mode === 'transparent' || (b.mode === 'image' && !b.image));
+}
+
+async function loadBlobImage(blob: Blob, urls: string[]): Promise<HTMLImageElement> {
+  const u = URL.createObjectURL(blob);
+  urls.push(u);
+  const img = await loadImage(u);
+  if (img.decode) await img.decode().catch(() => undefined);
+  return img;
 }
 
 /** Safari на iPhone/iPad не рисует холст больше 16 777 216 пикселей. */
@@ -174,6 +195,7 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
   const report = opts.onProgress ?? (() => undefined);
   report(0.02, 'Открываю оригинал…');
   const url = URL.createObjectURL(source);
+  const extraUrls: string[] = [];
   try {
     const img = await loadImage(url);
     if (img.decode) await img.decode().catch(() => undefined);
@@ -196,10 +218,55 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     const s = ow / g.cw;
-    ctx.setTransform(s, 0, 0, s, -g.crop.x * g.rw * s, -g.crop.y * g.rh * s);
-    ctx.translate(g.rw / 2, g.rh / 2);
-    ctx.rotate((edits.rotation * Math.PI) / 180);
-    ctx.drawImage(img, -W0 / 2, -H0 / 2, W0, H0);
+    // Координаты повёрнутого кадра (до обрезки) → холст
+    const frame = (c: CanvasRenderingContext2D) => c.setTransform(s, 0, 0, s, -g.crop.x * g.rw * s, -g.crop.y * g.rh * s);
+    // Координаты исходника с центром в нуле → холст
+    const imageSpace = (c: CanvasRenderingContext2D) => {
+      frame(c);
+      c.translate(g.rw / 2, g.rh / 2);
+      c.rotate((edits.rotation * Math.PI) / 180);
+    };
+    const bg = edits.background && opts.assets?.mask ? edits.background : null;
+    if (!bg) {
+      imageSpace(ctx);
+      ctx.drawImage(img, -W0 / 2, -H0 / 2, W0, H0);
+    } else {
+      report(0.12, 'Замена фона…');
+      const mask = await loadBlobImage(opts.assets!.mask!, extraUrls);
+      const bgImg = bg.mode === 'image' && opts.assets?.bgImage ? await loadBlobImage(opts.assets.bgImage, extraUrls) : null;
+      if (bg.mode === 'color') {
+        frame(ctx);
+        ctx.fillStyle = bg.color;
+        ctx.fillRect(0, 0, g.rw, g.rh);
+      } else if (bgImg) {
+        // Как background-size: cover по всему повёрнутому кадру
+        const iw = bgImg.naturalWidth;
+        const ih = bgImg.naturalHeight;
+        const k = Math.max(g.rw / iw, g.rh / ih);
+        frame(ctx);
+        ctx.drawImage(bgImg, (g.rw - iw * k) / 2, (g.rh - ih * k) / 2, iw * k, ih * k);
+      } else if (bg.mode === 'blur') {
+        const blurred = blurredBackdrop(img, W0, H0, bg.blur);
+        imageSpace(ctx);
+        ctx.drawImage(blurred, -W0 / 2, -H0 / 2, W0, H0);
+        blurred.width = blurred.height = 1;
+      }
+      // Объект: исходник, вырезанный маской, на отдельном слое
+      const layer = document.createElement('canvas');
+      layer.width = ow;
+      layer.height = oh;
+      const lctx = layer.getContext('2d');
+      if (!lctx) throw new MediaError('Браузер не дал холст для рендера. Закройте другие вкладки и повторите.');
+      lctx.imageSmoothingEnabled = true;
+      lctx.imageSmoothingQuality = 'high';
+      imageSpace(lctx);
+      lctx.drawImage(img, -W0 / 2, -H0 / 2, W0, H0);
+      lctx.globalCompositeOperation = 'destination-in';
+      lctx.drawImage(mask, -W0 / 2, -H0 / 2, W0, H0);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(layer, 0, 0);
+      layer.width = layer.height = 1;
+    }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     const p = pixelParams(edits);
@@ -225,7 +292,7 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
     }
 
     report(0.9, 'Сохраняю файл…');
-    const type = opts.type ?? 'image/jpeg';
+    const type = needsAlpha(edits) && opts.assets?.mask ? 'image/png' : opts.type ?? 'image/jpeg';
     const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, type, opts.quality ?? 0.95));
     // Освобождаем память холста сразу (важно для iOS).
     canvas.width = canvas.height = 1;
@@ -234,6 +301,7 @@ export async function renderPhoto(source: Blob, edits: PhotoEdits, opts: RenderO
     return { blob, width: ow, height: oh, limited, sourceWidth: g.cw, sourceHeight: g.ch, type };
   } finally {
     URL.revokeObjectURL(url);
+    extraUrls.forEach((u) => URL.revokeObjectURL(u));
   }
 }
 

@@ -69,6 +69,8 @@ interface Progress {
   label: string;
   /** 0…1 или null для неопределённого */
   value: number | null;
+  /** Кнопка «Отменить» под индикатором */
+  onCancel?: () => void;
 }
 
 interface UiCtx {
@@ -128,6 +130,11 @@ export function UiProvider({ children }: { children: ReactNode }) {
                 style={progress.value == null ? undefined : { width: `${Math.round(progress.value * 100)}%` }}
               />
             </div>
+            {progress.onCancel && (
+              <button className="btn btn-soft btn-sm progress-cancel" onClick={progress.onCancel}>
+                Отменить
+              </button>
+            )}
           </div>
         </div>
       )}

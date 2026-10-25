@@ -1,29 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { TopBar, useFilePicker, useUi } from '../../components/ui';
+import { Sheet, TopBar, useFilePicker, useUi } from '../../components/ui';
 import { Icon } from '../../components/Icon';
 import { useEditorProject } from '../../app/useEditorProject';
-import { useNav } from '../../app/nav';
-import { newId } from '../../lib/db';
+import { deleteMedia, getMedia, newId, putMedia } from '../../lib/db';
+import { loadImage } from '../../lib/media';
+import { formatBytes } from '../../lib/format';
+import { aiAssetsReady, aiManifest, downloadAiAssets, totalSize } from '../../ai/assets';
+import { computeMask } from '../../ai/providers/backgroundRemoval';
+import type { AiProgress } from '../../ai/types';
 import { prepareDelivery } from '../../lib/deliver';
 import { ImportEmpty } from '../shared/ImportEmpty';
-import { PhotoView } from './PhotoView';
+import { PhotoView, type BackgroundLayers } from './PhotoView';
+import { BackgroundPanel } from './BackgroundPanel';
 import { TextSheet } from './TextSheet';
 import { ExportSheet } from './ExportSheet';
 import { ASPECTS, FULL, fitAspect, isFull, rotateCropCW, type AspectId } from './geometry';
-import { blobToDataUrl, renderPhoto, type RenderResult } from './render';
+import { blobToDataUrl, needsAlpha, renderPhoto, type PhotoAssets, type RenderResult } from './render';
 import {
   DEFAULT_EDITS,
   PRESETS,
+  blurredBackdrop,
+  editMediaIds,
   isEdited,
   normalizeEdits,
   temperatureLayer,
   toCssFilter,
+  type BackgroundEdit,
   type CropRect,
   type PhotoEdits,
   type TextLayer,
 } from './pipeline';
 
-type Panel = 'filters' | 'adjust' | 'text';
+type Panel = 'filters' | 'adjust' | 'text' | 'background';
 
 const ADJUST: { key: 'brightness' | 'contrast' | 'saturation' | 'temperature'; label: string }[] = [
   { key: 'brightness', label: 'Яркость' },
@@ -32,12 +40,11 @@ const ADJUST: { key: 'brightness' | 'contrast' | 'saturation' | 'temperature'; l
   { key: 'temperature', label: 'Температура' },
 ];
 
-export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
+export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; tool?: string }) {
   const ui = useUi();
-  const nav = useNav();
   const { meta, blob, url, loading, error, persisted, importFile, patch, retry } = useEditorProject('photo', projectId);
   const picker = useFilePicker('image/*', importFile);
-  const [panel, setPanel] = useState<Panel>('filters');
+  const [panel, setPanel] = useState<Panel>(tool === 'background' ? 'background' : 'filters');
   const [edits, setEdits] = useState<PhotoEdits>(DEFAULT_EDITS);
   const [activeAdjust, setActiveAdjust] = useState<(typeof ADJUST)[number]['key']>('brightness');
   const [cropping, setCropping] = useState<{ rect: CropRect; aspect: AspectId } | null>(null);
@@ -45,6 +52,8 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
   const [result, setResult] = useState<RenderResult | null>(null);
   const [mediaFailed, setMediaFailed] = useState(false);
   const loadedFor = useRef<string | null>(null);
+  /** Файлы фона, которые есть в правках сейчас (чтобы удалять ненужные) */
+  const liveMedia = useRef<string[]>([]);
 
   useEffect(() => prepareDelivery(), []);
 
@@ -53,7 +62,9 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
     if (meta && loadedFor.current !== meta.id) {
       loadedFor.current = meta.id;
       setMediaFailed(false);
-      setEdits(normalizeEdits(meta.photoEdits));
+      const e = normalizeEdits(meta.photoEdits);
+      liveMedia.current = editMediaIds(e);
+      setEdits(e);
     }
   }, [meta]);
 
@@ -67,7 +78,145 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [edits]);
 
+  /* ---------- Фон: маска и картинка фона — отдельные файлы проекта ---------- */
+  const [bgBlobs, setBgBlobs] = useState<PhotoAssets>({});
+  const [layers, setLayers] = useState<BackgroundLayers>({ mask: null, bgImage: null, blur: null });
+  const [modelReady, setModelReady] = useState<boolean | null>(null);
+  const [modelSize, setModelSize] = useState<number | null>(null);
+  const [askDownload, setAskDownload] = useState(false);
+  /** Файлы, ещё не записанные в хранилище (или если хранилище недоступно) */
+  const memBlobs = useRef(new Map<string, Blob>());
+  const bg = edits.background;
+
+  useEffect(() => {
+    aiAssetsReady().then(setModelReady);
+    aiManifest().then((m) => setModelSize(totalSize(m)), () => undefined);
+  }, []);
+
+  const readFile = (id: string) => memBlobs.current.get(id) ?? getMedia(id);
+
+  useEffect(() => {
+    let cancelled = false;
+    const made: string[] = [];
+    (async () => {
+      try {
+        const mask = bg ? await readFile(bg.mask) : null;
+        const bgImage = bg?.image ? await readFile(bg.image) : null;
+        if (cancelled) return;
+        const toUrl = (b: Blob | null) => {
+          if (!b) return null;
+          const u = URL.createObjectURL(b);
+          made.push(u);
+          return u;
+        };
+        setBgBlobs({ mask, bgImage });
+        setLayers((l) => ({ ...l, mask: toUrl(mask), bgImage: toUrl(bgImage) }));
+      } catch (e) {
+        if (!cancelled) ui.toast(`Файл фона не открылся: ${(e as Error).message}`, 'error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+      made.forEach((u) => URL.revokeObjectURL(u));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bg?.mask, bg?.image]);
+
+  // Размытый фон для предпросмотра — той же функцией, что и при сохранении
+  const blurOn = bg?.mode === 'blur';
+  const blurAmount = bg?.blur ?? 0;
+  useEffect(() => {
+    if (!blurOn || !url || !srcW) return;
+    let cancelled = false;
+    let made: string | null = null;
+    const t = setTimeout(async () => {
+      try {
+        const img = await loadImage(url);
+        if (cancelled) return;
+        const c = blurredBackdrop(img, srcW, srcH, blurAmount);
+        const b = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', 0.9));
+        c.width = c.height = 1;
+        if (cancelled || !b) return;
+        made = URL.createObjectURL(b);
+        setLayers((l) => ({ ...l, blur: made }));
+      } catch {
+        /* без предпросмотра размытия — фон останется прозрачным до сохранения */
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      if (made) URL.revokeObjectURL(made);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blurOn, blurAmount, url]);
+
+  // Файлы фона, на которые правки больше не ссылаются, удаляем из хранилища
+  useEffect(() => {
+    if (!meta || loadedFor.current !== meta.id) return;
+    const now = editMediaIds(edits);
+    const gone = liveMedia.current.filter((id) => !now.includes(id));
+    liveMedia.current = now;
+    if (!gone.length) return;
+    gone.forEach((id) => memBlobs.current.delete(id));
+    if (persisted) setTimeout(() => gone.forEach((id) => deleteMedia(id).catch(() => undefined)), 1500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edits]);
+
+  const storeFile = async (b: Blob): Promise<string> => {
+    const id = newId();
+    memBlobs.current.set(id, b);
+    if (persisted) {
+      await putMedia(id, b);
+      memBlobs.current.delete(id);
+    }
+    return id;
+  };
+
+  const removeBackground = async (confirmed = false) => {
+    if (!blob) return;
+    const ready = await aiAssetsReady();
+    if (!ready && !confirmed) {
+      setAskDownload(true);
+      return;
+    }
+    setAskDownload(false);
+    const ctrl = new AbortController();
+    const show = (p: AiProgress) => ui.setProgress({ ...p, onCancel: () => ctrl.abort() });
+    try {
+      if (!ready) {
+        show({ value: 0, label: 'Скачиваю модель…' });
+        await downloadAiAssets(show, ctrl.signal);
+        setModelReady(true);
+      }
+      const r = await computeMask(blob, show, ctrl.signal);
+      const id = await storeFile(r.mask);
+      const next: BackgroundEdit = bg ? { ...bg, mask: id } : { mask: id, mode: 'transparent', color: '#FFFFFF', blur: 0.5, image: null };
+      set({ background: next });
+      ui.toast(`Фон отделён за ${(r.ms / 1000).toFixed(1)} с`, 'ok');
+    } catch (e) {
+      if ((e as DOMException)?.name !== 'AbortError') ui.toast((e as Error).message || 'Не удалось удалить фон', 'error');
+    } finally {
+      ui.setProgress(null);
+    }
+  };
+
+  const bgPicker = useFilePicker('image/*', async (file) => {
+    if (!bg) return;
+    ui.setProgress({ label: 'Добавляю фон…', value: null });
+    try {
+      await loadImage(URL.createObjectURL(file)).then((img) => URL.revokeObjectURL(img.src));
+      const id = await storeFile(file);
+      setEdits((e) => (e.background ? { ...e, background: { ...e.background, mode: 'image', image: id } } : e));
+    } catch (e) {
+      ui.toast((e as Error).message || 'Не удалось открыть фото для фона', 'error');
+    } finally {
+      ui.setProgress(null);
+    }
+  });
+
   const set = (p: Partial<PhotoEdits>) => setEdits((e) => ({ ...e, ...p }));
+  const setBg = (p: Partial<BackgroundEdit>) => setEdits((e) => (e.background ? { ...e, background: { ...e.background, ...p } } : e));
   const srcW = meta?.width ?? 0;
   const srcH = meta?.height ?? 0;
   const quarter = edits.rotation % 180 !== 0;
@@ -132,10 +281,12 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
     ui.setProgress({ label: 'Готовлю фото…', value: 0 });
     try {
       const type = meta.mime === 'image/png' ? 'image/png' : 'image/jpeg';
-      const r = await renderPhoto(blob, edits, { type, quality: 0.95, onProgress: (value, label) => ui.setProgress({ value, label }) });
+      const assets = bgBlobs;
+      if (edits.background && !assets.mask) throw new Error('Маска фона ещё загружается. Повторите через секунду.');
+      const r = await renderPhoto(blob, edits, { type, quality: 0.95, assets, onProgress: (value, label) => ui.setProgress({ value, label }) });
       // Превью проекта с правками — для «Недавних»
       try {
-        const thumb = await renderPhoto(blob, edits, { maxSide: 320, quality: 0.8, useWorker: false });
+        const thumb = await renderPhoto(blob, edits, { maxSide: 320, quality: 0.8, useWorker: false, assets, type: needsAlpha(edits) ? 'image/png' : 'image/jpeg' });
         await patch({ photoEdits: edits, thumb: await blobToDataUrl(thumb.blob) });
       } catch {
         await patch({ photoEdits: edits });
@@ -148,7 +299,8 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
     }
   };
 
-  const filename = `${(meta?.name ?? 'photo').replace(/[\\/:*?"<>|]+/g, '_')}-wstudio.${meta?.mime === 'image/png' ? 'png' : 'jpg'}`;
+  const outPng = result ? result.type === 'image/png' : meta?.mime === 'image/png';
+  const filename = `${(meta?.name ?? 'photo').replace(/[\\/:*?"<>|]+/g, '_')}-wstudio.${outPng ? 'png' : 'jpg'}`;
   const current = ADJUST.find((a) => a.key === activeAdjust)!;
   const editingLayer = edits.texts.find((t) => t.id === editingText) ?? null;
 
@@ -185,6 +337,7 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
             setEditingText(id);
           }}
           onMediaError={() => setMediaFailed(true)}
+          layers={layers}
         />
         {(mediaFailed || (error && !loading)) && (
           <div className="stage-error" role="alert">
@@ -196,6 +349,7 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
           </div>
         )}
         {picker.input}
+        {bgPicker.input}
       </div>
 
       {cropping ? (
@@ -242,9 +396,9 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
               <Icon name="rotate" size={24} />
               <span>Поворот</span>
             </button>
-            <button className="tool" onClick={() => nav.push({ name: 'ai' })}>
+            <button className={`tool ${panel === 'background' ? 'is-active' : ''}`} onClick={() => setPanel('background')}>
               <Icon name="cutout" size={24} />
-              <span>ИИ-фон</span>
+              <span>Фон</span>
               <i className="tool-dot tool-dot-ai" aria-hidden="true" />
             </button>
             <button className={`tool ${panel === 'text' ? 'is-active' : ''}`} onClick={() => setPanel('text')}>
@@ -312,6 +466,18 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
               </div>
             )}
 
+            {panel === 'background' && (
+              <BackgroundPanel
+                bg={bg}
+                modelReady={modelReady}
+                modelSize={modelSize}
+                onRemove={() => removeBackground()}
+                onChange={setBg}
+                onPickImage={bgPicker.open}
+                onRestore={() => set({ background: null })}
+              />
+            )}
+
             {panel === 'text' && (
               <div className="text-panel">
                 <div className="chip-row chip-row-scroll">
@@ -347,6 +513,21 @@ export function PhotoEditorScreen({ projectId }: { projectId?: string }) {
         onClose={closeTextEditor}
       />
       <ExportSheet result={result} filename={filename} onClose={() => setResult(null)} />
+      <Sheet open={askDownload} onClose={() => setAskDownload(false)} title="Скачать модель?">
+        <div className="feature-sheet">
+          <p className="feature-note">
+            Для удаления фона нужна модель ИИ{modelSize ? ` (${formatBytes(modelSize)})` : ''}. Она скачивается один раз, сохраняется на этом устройстве и дальше
+            работает без интернета. Фото никуда не отправляются.
+          </p>
+          <p className="muted small">Лучше скачивать по Wi-Fi. Удалить модель можно в разделе «ИИ-инструменты».</p>
+          <button className="btn btn-primary btn-block" onClick={() => removeBackground(true)}>
+            Скачать и удалить фон
+          </button>
+          <button className="btn btn-soft btn-block" onClick={() => setAskDownload(false)}>
+            Не сейчас
+          </button>
+        </div>
+      </Sheet>
     </div>
   );
 }

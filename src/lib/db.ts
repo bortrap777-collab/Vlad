@@ -6,7 +6,7 @@
  *    бывает нечитаем, а ссылки на него не открываются. Обычные байты читаются всегда.
  *  - `media` — старый формат (этапы 1–4), переносится в куски при первом открытии.
  */
-import type { PhotoEdits } from '../features/photo/pipeline';
+import { editMediaIds, type PhotoEdits } from '../features/photo/pipeline';
 import type { SourceMeta, Timeline } from '../features/video/model';
 
 export type ProjectKind = 'video' | 'photo';
@@ -220,11 +220,17 @@ export async function updateProject(id: string, patch: Partial<ProjectMeta>): Pr
 
 export async function deleteProject(id: string): Promise<void> {
   const meta = await getProject(id);
-  const mediaIds = new Set([id, ...(meta?.sources ?? []).map((s) => s.id)]);
+  const mediaIds = new Set(meta ? projectMediaIds(meta) : [id]);
   await tx<void>(['projects'], 'readwrite', (t) => {
     t.objectStore('projects').delete(id);
   });
   for (const m of mediaIds) await deleteMediaData(m);
+}
+
+/** Все файлы проекта: исходники, музыка, маска и картинка фона. */
+export function projectMediaIds(m: ProjectMeta): string[] {
+  const ids = m.kind === 'video' && m.sources?.length ? m.sources.map((s) => s.id) : [m.id];
+  return [...new Set([...ids, ...editMediaIds(m.photoEdits)])];
 }
 
 export function deleteMedia(mediaId: string): Promise<void> {

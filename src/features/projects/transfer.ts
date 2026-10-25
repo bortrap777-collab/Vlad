@@ -4,7 +4,7 @@
  *   media/N       — исходные файлы без пережатия.
  * При импорте все идентификаторы заменяются новыми, чтобы не пересечься с проектами на устройстве.
  */
-import { getMedia, getProject, newId, notifyProjectsChanged, putMedia, putProject, deleteMedia, type ProjectMeta } from '../../lib/db';
+import { getMedia, getProject, newId, notifyProjectsChanged, projectMediaIds, putMedia, putProject, deleteMedia, type ProjectMeta } from '../../lib/db';
 import { readText, readZip, verifyEntry, writeZip, ZipError, type ZipInput } from '../../lib/zip';
 
 const FORMAT = 'w-studio-project';
@@ -18,15 +18,10 @@ interface Manifest {
   media: { id: string; type: string; size: number; file: string }[];
 }
 
-function mediaIds(m: ProjectMeta): string[] {
-  if (m.kind === 'video' && m.sources?.length) return m.sources.map((s) => s.id);
-  return [m.id];
-}
-
 export async function exportProjectFile(id: string, onProgress: (v: number, label: string) => void): Promise<{ blob: Blob; filename: string }> {
   const meta = await getProject(id);
   if (!meta) throw new Error('Проект не найден.');
-  const ids = mediaIds(meta);
+  const ids = projectMediaIds(meta);
   const entries: ZipInput[] = [];
   const media: Manifest['media'] = [];
   for (let i = 0; i < ids.length; i++) {
@@ -77,6 +72,16 @@ export async function importProjectFile(file: Blob, onProgress: (v: number, labe
           music: old.timeline.music ? { ...old.timeline.music, src: idFor(old.timeline.music.src) } : null,
         }
       : undefined,
+    photoEdits: old.photoEdits?.background
+      ? {
+          ...old.photoEdits,
+          background: {
+            ...old.photoEdits.background,
+            mask: idFor(old.photoEdits.background.mask),
+            image: old.photoEdits.background.image ? idFor(old.photoEdits.background.image) : null,
+          },
+        }
+      : old.photoEdits,
   };
 
   const total = manifest.media.reduce((a, m) => a + m.size, 0) || 1;

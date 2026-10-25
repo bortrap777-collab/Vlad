@@ -1480,10 +1480,31 @@ button.row:active,
   left: 50%;
   top: 50%;
   max-width: none;
-  transition: filter 0.12s linear;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+.photo-composite {
+  position: absolute;
+  inset: 0;
+  transition: filter 0.12s linear;
+}
+.bg-fill {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+.checker {
+  position: absolute;
+  inset: 0;
+  background: repeating-conic-gradient(#d9d9de 0 25%, #ffffff 0 50%) 0 0 / 18px 18px;
+}
+.temp-layer.ph-layer {
+  position: absolute;
+  inset: auto;
+  left: 50%;
+  top: 50%;
 }
 .text-layer {
   position: absolute;
@@ -2173,4 +2194,45 @@ button.row:active,
 .update-banner .icon-btn {
   font-size: 20px;
   color: var(--text-2);
+}
+
+/* ============ Фон (ИИ) ============ */
+.bg-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bg-panel > .pill {
+  align-self: flex-start;
+}
+.swatches-row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 5px 4px;
+  margin: -5px -4px;
+}
+.swatches-row::-webkit-scrollbar {
+  display: none;
+}
+.swatches-row .swatch {
+  flex: none;
+}
+.swatch-custom {
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(#ff5e5e, #ffd84d, #2fcb8a, #4c9bff, #8366ff, #ff6fa3, #ff5e5e);
+  cursor: pointer;
+}
+.swatch-custom input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+.progress-cancel {
+  margin-top: 4px;
+  align-self: center;
 }

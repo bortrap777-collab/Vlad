@@ -24,6 +24,8 @@ jobs:
         with:
           node-version: 22
       - run: npm install --no-audit --no-fund
+      - name: Файлы ИИ (модель и движок)
+        run: node scripts/prepare-ai.mjs
       - name: Проверка типов
         # Ошибки выводятся пометками к запуску (видны без доступа к логам)
         run: |

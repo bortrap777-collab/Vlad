@@ -1,18 +1,20 @@
 {
   "name": "w-studio",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "W Studio — мобильный редактор фото и видео (PWA)",
   "type": "module",
   "scripts": {
-    "dev": "vite --host",
-    "build": "tsc -b && vite build",
+    "dev": "node scripts/prepare-ai.mjs && vite --host",
+    "build": "node scripts/prepare-ai.mjs && tsc -b && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc -b --noEmit",
     "build:local": "node scripts/build-local.mjs",
-    "build:single": "node scripts/build-local.mjs --single"
+    "build:single": "node scripts/build-local.mjs --single",
+    "prepare:ai": "node scripts/prepare-ai.mjs"
   },
   "dependencies": {
+    "onnxruntime-web": "1.24.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

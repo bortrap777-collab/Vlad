@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   base: './',
   plugins: [react()],
+  // Worker модели — ES-модуль (Safari 15+), как и основное приложение
+  worker: { format: 'es' },
   build: {
     target: ['safari15', 'chrome100'],
     sourcemap: false,

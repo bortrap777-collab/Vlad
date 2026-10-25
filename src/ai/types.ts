@@ -14,8 +14,8 @@ export type AiToolId = 'bg-remove' | 'bg-replace' | 'enhance' | 'captions' | 'sm
 export type ProviderKind = 'on-device' | 'server' | 'api';
 
 export interface AiProgress {
-  /** 0…1 */
-  value: number;
+  /** 0…1, null — длительность неизвестна */
+  value: number | null;
   label: string;
 }
 

@@ -37,14 +37,14 @@ export const FEATURES = {
   videoExport: { title: 'Экспорт видео', stage: 4, status: 'ready', note: 'MP4 (H.264 + AAC) на устройстве, до 4K, с прогрессом и отменой.' },
 
   // Этап 5 — ИИ
-  aiBgRemove: { title: 'Удаление фона', stage: 5, status: 'needs-model', note: 'Нужна модель сегментации.' },
-  aiBgReplace: { title: 'Замена фона', stage: 5, status: 'needs-model', note: 'Использует удаление фона.' },
-  aiEnhance: { title: 'Улучшение качества', stage: 5, status: 'needs-model', note: 'Нужна модель апскейла.' },
-  aiCaptions: { title: 'Автосубтитры', stage: 5, status: 'needs-model', note: 'Нужна модель распознавания речи.' },
-  aiSmartEdit: { title: 'Умный монтаж', stage: 5, status: 'needs-model', note: 'Нужен анализ сцен и языковая модель.' },
+  aiBgRemove: { title: 'Удаление фона', stage: 5, status: 'ready', note: 'Модель ISNet на устройстве (56 МБ, скачивается один раз), работает офлайн.' },
+  aiBgReplace: { title: 'Замена фона', stage: 5, status: 'ready', note: 'Прозрачный фон (PNG), цвет, размытие или своё фото.' },
+  aiEnhance: { title: 'Улучшение качества', stage: 5, status: 'needs-model', note: 'Нужна модель апскейла или API.' },
+  aiCaptions: { title: 'Автосубтитры', stage: 5, status: 'needs-model', note: 'Нужен API-ключ сервиса распознавания речи.' },
+  aiSmartEdit: { title: 'Умный монтаж', stage: 5, status: 'needs-model', note: 'Нужны распознавание речи и языковая модель по API.' },
 } satisfies Record<string, FeatureInfo>;
 
 export type FeatureId = keyof typeof FEATURES;
 
-export const APP_VERSION = '0.4.2';
-export const APP_STAGE = 4;
+export const APP_VERSION = '0.5.0';
+export const APP_STAGE = 5;
