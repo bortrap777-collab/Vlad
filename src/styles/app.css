@@ -841,7 +841,10 @@ p {
   margin-right: calc(-1 * max(16px, env(safe-area-inset-right, 0px)));
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: 3px;
+  padding-bottom: 2px;
   scroll-snap-type: x proximity;
+  scroll-padding-inline: max(16px, env(safe-area-inset-left, 0px));
 }
 .preset-row::-webkit-scrollbar {
   display: none;
@@ -2038,6 +2041,11 @@ button.row:active,
 }
 .toolbar .tool span {
   font-size: 0.6875rem;
+}
+/* шесть инструментов фото в ряд: подписи мельче, чтобы «Настройки» не обрезались */
+.toolbar.toolbar-top .tool span {
+  font-size: 0.625rem;
+  letter-spacing: -0.02em;
 }
 .tl-row-clips {
   height: 60px !important;

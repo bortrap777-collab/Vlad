@@ -10,14 +10,14 @@ export function formatTime(sec: number | undefined): string {
 }
 
 export function formatBytes(n: number): string {
-  if (!n) return '0 Б';
+  if (!n) return '0\u00a0Б';
   const units = ['Б', 'КБ', 'МБ', 'ГБ'];
   let i = 0;
   while (n >= 1024 && i < units.length - 1) {
     n /= 1024;
     i++;
   }
-  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1).replace('.', ',')} ${units[i]}`;
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1).replace('.', ',')}\u00a0${units[i]}`;
 }
 
 export function formatDate(ts: number): string {

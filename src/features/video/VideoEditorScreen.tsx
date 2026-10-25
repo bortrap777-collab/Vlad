@@ -226,7 +226,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
 
   const videoSources = Object.values(sources).filter((s) => s.kind === 'video');
   // Кадр вписываем сами: и ширина, и высота ограничены, пропорция сохраняется точно
-  const maxH = Math.max(160, window.innerHeight * 0.36);
+  const maxH = Math.max(160, window.innerHeight * 0.44);
   const fw = Math.min(stageBox.width || 358, maxH * aspect);
   const frameSize = { width: fw, height: fw / aspect };
   const musicSrc = timeline.music ? sources[timeline.music.src] : null;
