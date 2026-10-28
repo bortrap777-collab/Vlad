@@ -1,0 +1,106 @@
+{
+ "ru-base": {
+  "text": " Это промерка сути траф, и в самом деле это был juice to do. Семорным моментом имминия программа телефона, расползан в маннию и сиамотом с сиумево.",
+  "chunks": [
+   {
+    "text": " Это промерка сути траф, и в самом деле это был juice to do.",
+    "timestamp": [
+     0.0,
+     5.0
+    ]
+   },
+   {
+    "text": " Семорным моментом имминия программа телефона,",
+    "timestamp": [
+     5.0,
+     8.12
+    ]
+   },
+   {
+    "text": " расползан в маннию и сиамотом с сиумево.",
+    "timestamp": [
+     8.12,
+     10.8
+    ]
+   }
+  ]
+ },
+ "ru-tiny": {
+  "text": " Приняет. Это про меры кацутитра, про герендерно-болюстю део. Семон дно мемонтируем в виде программа на телефон. Расспозициональный репший рамотарит МФ Семер.",
+  "chunks": [
+   {
+    "text": " Приняет.",
+    "timestamp": [
+     0.0,
+     1.0
+    ]
+   },
+   {
+    "text": " Это про меры кацутитра, про герендерно-болюстю део.",
+    "timestamp": [
+     1.0,
+     5.0
+    ]
+   },
+   {
+    "text": " Семон дно мемонтируем в виде программа на телефон.",
+    "timestamp": [
+     5.0,
+     8.0
+    ]
+   },
+   {
+    "text": " Расспозициональный репший рамотарит МФ Семер.",
+    "timestamp": [
+     8.0,
+     11.0
+    ]
+   }
+  ]
+ },
+ "en-base": {
+  "text": " Hello and welcome. This is a subtitle test for the video editor. The weather is ice today.",
+  "chunks": [
+   {
+    "text": " Hello and welcome. This is a subtitle test for the video editor.",
+    "timestamp": [
+     0.0,
+     4.42
+    ]
+   },
+   {
+    "text": " The weather is ice today.",
+    "timestamp": [
+     4.42,
+     6.1
+    ]
+   }
+  ]
+ },
+ "en-tiny": {
+  "text": " The long and welcome. This is my sub title test for my video and editor. But whenever it's nice today.",
+  "chunks": [
+   {
+    "text": " The long and welcome.",
+    "timestamp": [
+     0.0,
+     1.48
+    ]
+   },
+   {
+    "text": " This is my sub title test for my video and editor.",
+    "timestamp": [
+     1.48,
+     4.48
+    ]
+   },
+   {
+    "text": " But whenever it's nice today.",
+    "timestamp": [
+     4.48,
+     6.12
+    ]
+   }
+  ]
+ }
+}
