@@ -1,5 +1,5 @@
-# Временная ветка: получить файлы Whisper для W Studio, посчитать SHA-256
-# и снять эталон распознавания. Не связана с публикацией сайта (ветка main).
+# Временная ветка: файлы Whisper для W Studio и проверка на живой русской речи.
+# Не связана с публикацией сайта (ветка main).
 name: Whisper probe
 on:
   push:
@@ -9,81 +9,88 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with: { node-version: 22 }
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
-      - name: Файлы моделей
+      - name: Модель small (частями по 90 МБ — ограничение git)
         run: |
           set -e
-          mkdir -p out/models
-          dl() { # repo file outname
-            url="https://huggingface.co/$1/resolve/main/$2"
-            if curl -fsSL --retry 3 "$url" -o "out/models/$3"; then
-              echo "::notice title=got::$3 $(stat -c%s out/models/$3) $(sha256sum out/models/$3 | cut -c1-64)"
-            else
-              echo "::warning title=missing::$1/$2"; rm -f "out/models/$3"
-            fi
-          }
-          for m in base tiny; do
-            R=onnx-community/whisper-$m
-            dl $R onnx/encoder_model_quantized.onnx whisper-$m-encoder-q8.onnx
-            dl $R onnx/decoder_model_merged_quantized.onnx whisper-$m-decoder-q8.onnx
-            dl $R config.json whisper-$m-config.json
-            dl $R generation_config.json whisper-$m-generation.json
-            dl $R preprocessor_config.json whisper-$m-preprocessor.json
-            dl $R vocab.json whisper-$m-vocab.json
-            dl $R added_tokens.json whisper-$m-added.json
+          mkdir -p out/small
+          for f in encoder decoder_model_merged; do
+            name=$([ "$f" = encoder ] && echo encoder_model_quantized.onnx || echo decoder_model_merged_quantized.onnx)
+            out=whisper-small-$([ "$f" = encoder ] && echo encoder || echo decoder)-q8.onnx
+            curl -fsSL --retry 3 "https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/$name" -o "$out"
+            echo "::notice title=small::$out $(stat -c%s $out) $(sha256sum $out | cut -c1-64)"
+            split -b 90m -d "$out" "out/small/$out.part"
+            rm "$out"
           done
-          ls -la out/models
-      - name: Движок ONNX Runtime Web
+          for j in generation_config.json vocab.json; do curl -fsSL "https://huggingface.co/onnx-community/whisper-small/resolve/main/$j" -o out/small/whisper-small-$j; done
+          ls -la out/small
+      - name: Живая русская речь
+        continue-on-error: true
         run: |
           set -e
-          mkdir -p out/ort && cd out/ort
-          npm pack onnxruntime-web@1.24.3 --silent
-          tar xzf onnxruntime-web-1.24.3.tgz
-          rm onnxruntime-web-1.24.3.tgz
-          ls package/dist | head -80
-          # Оставляем только сборку wasm (её и использует приложение) и типы
-          cd package/dist && ls | grep -v -E '^(ort\.wasm\.min\.mjs|ort-wasm-simd-threaded\.(mjs|wasm)|ort\.wasm\.mjs)$' | xargs rm -rf; cd ..
-          du -sh . ; ls dist
-          echo "::notice title=ort::$(ls dist | tr '\n' ' ')"
-      - name: Тестовая речь и эталон
-        run: |
-          set -e
-          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng ffmpeg >/dev/null
-          mkdir -p out/test
-          espeak-ng -v ru -s 140 -w out/test/ru.wav "Привет! Это проверка субтитров в приложении W Studio. Сегодня мы монтируем видео прямо на телефоне. Распознавание речи работает без сервера."
-          espeak-ng -v en-us -s 150 -w out/test/en.wav "Hello and welcome. This is a subtitle test for the video editor. The weather is nice today."
-          for f in ru en; do ffmpeg -loglevel error -y -i out/test/$f.wav -ar 16000 -ac 1 out/test/$f-16k.wav; done
-          pip install -q --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
-          pip install -q transformers==4.46.3 soundfile numpy
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+          pip install -q --index-url https://download.pytorch.org/whl/cpu torch==2.5.1 torchaudio==2.5.1
+          pip install -q transformers==4.46.3 soundfile numpy "datasets==2.21.0" librosa omegaconf
+          mkdir -p out/real
           python - <<'PY'
-          import json, numpy as np, soundfile as sf
-          from transformers import WhisperFeatureExtractor, pipeline
-          fe = WhisperFeatureExtractor.from_pretrained('openai/whisper-base')
+          import json, numpy as np, soundfile as sf, librosa, os
+          got = []
+          try:
+              from datasets import load_dataset
+              ds = load_dataset('google/fleurs', 'ru_ru', split='test', streaming=True, trust_remote_code=True)
+              for i, row in enumerate(ds):
+                  a = np.asarray(row['audio']['array'], dtype=np.float32); sr = row['audio']['sampling_rate']
+                  a = librosa.resample(a, orig_sr=sr, target_sr=16000) if sr != 16000 else a
+                  sf.write(f'out/real/fleurs{i}.wav', a, 16000, subtype='PCM_16')
+                  got.append({'file': f'fleurs{i}.wav', 'text': row['transcription'], 'raw': row.get('raw_transcription'), 'sec': len(a) / 16000})
+                  if i >= 4: break
+              print('::notice title=fleurs::', len(got), 'samples')
+          except Exception as e:
+              print('::warning title=fleurs::' + str(e)[:300])
+          try:
+              import torch
+              model, _ = torch.hub.load('snakers4/silero-models', 'silero_tts', language='ru', speaker='v4_ru', trust_repo=True)
+              texts = ['Привет! Сегодня я покажу, как смонтировать видео прямо на телефоне.',
+                       'Сначала выберите клипы из галереи, потом добавьте музыку и субтитры.',
+                       'Готовое видео можно сохранить в галерею или отправить друзьям.']
+              parts = []
+              for t in texts:
+                  wav = model.apply_tts(text=t, speaker='xenia', sample_rate=48000).numpy()
+                  parts.append(wav); parts.append(np.zeros(int(0.6 * 48000), dtype=np.float32))
+              a = librosa.resample(np.concatenate(parts).astype(np.float32), orig_sr=48000, target_sr=16000)
+              sf.write('out/real/silero.wav', a, 16000, subtype='PCM_16')
+              got.append({'file': 'silero.wav', 'text': ' '.join(texts), 'sec': len(a) / 16000})
+              print('::notice title=silero::ok', len(a) / 16000)
+          except Exception as e:
+              print('::warning title=silero::' + str(e)[:300])
+          # Длинная запись (> 30 с) — проверка перехода между окнами
+          wavs = [sf.read('out/real/' + g['file'], dtype='float32')[0] for g in got]
+          if wavs:
+              long = np.concatenate([np.concatenate([w, np.zeros(8000, dtype=np.float32)]) for w in wavs])
+              sf.write('out/real/long.wav', long, 16000, subtype='PCM_16')
+              got.append({'file': 'long.wav', 'text': ' | '.join(g['text'] for g in got), 'sec': len(long) / 16000})
+          from transformers import pipeline
           ref = {}
-          for lang in ['ru', 'en']:
-              audio, sr = sf.read(f'out/test/{lang}-16k.wav', dtype='float32')
-              feats = fe(audio, sampling_rate=16000, return_tensors='np').input_features[0].astype(np.float32)
-              feats.tofile(f'out/test/{lang}-mel.f32')
-              for m in ['base', 'tiny']:
-                  pipe = pipeline('automatic-speech-recognition', f'openai/whisper-{m}', device='cpu')
-                  r = pipe(audio.copy(), return_timestamps=True, generate_kwargs={'language': lang, 'task': 'transcribe'})
-                  ref[f'{lang}-{m}'] = {'text': r['text'], 'chunks': [{'text': c['text'], 'timestamp': list(c['timestamp'])} for c in r['chunks']]}
-                  print(f'::notice title=ref {lang}-{m}::' + r['text'][:200])
-          json.dump(ref, open('out/test/reference.json', 'w'), ensure_ascii=False, indent=1)
+          for m in ['base', 'small']:
+              pipe = pipeline('automatic-speech-recognition', f'openai/whisper-{m}', device='cpu')
+              for g in got:
+                  a, _ = sf.read('out/real/' + g['file'], dtype='float32')
+                  r = pipe(a.copy(), return_timestamps=True, generate_kwargs={'language': 'ru', 'task': 'transcribe'}, chunk_length_s=30 if len(a) > 480000 else None)
+                  ref[f"{g['file']}|{m}"] = {'text': r['text'], 'chunks': [{'text': c['text'], 'timestamp': list(c['timestamp'])} for c in r['chunks']]}
+                  print(f"::notice title={m} {g['file']}::" + r['text'][:180])
+          json.dump({'samples': got, 'reference': ref}, open('out/real/reference.json', 'w'), ensure_ascii=False, indent=1)
           PY
       - name: Сохранить в ветку
+        if: always()
         run: |
           set -e
-          cd out && sha256sum models/* test/* > SHA256SUMS && cd ..
           git config user.name "W Studio CI"
           git config user.email "ci@users.noreply.github.com"
           git add out
-          git commit -qm "Whisper: файлы моделей, движок, тестовая речь и эталон"
+          git commit -qm "Whisper: модель small и живая русская речь" || true
           git push -q origin HEAD:ci/whisper-probe
           echo "::notice title=done::pushed $(git rev-parse --short HEAD)"
