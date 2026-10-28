@@ -8,6 +8,7 @@
  */
 import { editMediaIds, type PhotoEdits } from '../features/photo/pipeline';
 import type { SourceMeta, Timeline } from '../features/video/model';
+import { diskCopyBroken, opfsClear, opfsDelete, opfsRead, opfsSupported, opfsWrite } from './fileStore';
 
 export type ProjectKind = 'video' | 'photo';
 
@@ -46,6 +47,55 @@ interface FileRecord {
   size: number;
   chunks: number;
   savedAt: number;
+  /** Где лежат байты: на диске (OPFS) или кусками в IndexedDB (по умолчанию) */
+  store?: 'opfs' | 'idb';
+}
+
+const OPFS_OFF = 'ws.opfsOff';
+function opfsEnabled(): boolean {
+  if (!opfsSupported()) return false;
+  try {
+    return localStorage.getItem(OPFS_OFF) !== '1';
+  } catch {
+    return true;
+  }
+}
+/** На этом устройстве файлы с диска не открылись — дальше храним по-старому */
+function disableOpfs(reason: string): void {
+  try {
+    localStorage.setItem(OPFS_OFF, '1');
+  } catch {
+    /* ничего */
+  }
+  console.warn('OPFS отключено:', reason);
+}
+
+async function putRecord(rec: FileRecord): Promise<void> {
+  await tx<void>(['files'], 'readwrite', (t) => {
+    t.objectStore('files').put(rec);
+  });
+}
+
+/** Записать на диск и убедиться, что файл читается. true — получилось. */
+async function tryOpfs(id: string, blob: Blob, onProgress?: (v: number) => void): Promise<boolean> {
+  if (!opfsEnabled() || blob.size === 0) return false;
+  try {
+    await opfsWrite(id, blob, onProgress);
+    const f = await opfsRead(id, blob.size, blob.type);
+    if (!f) throw new Error('файл не прочитался после записи');
+    if (await diskCopyBroken(blob, f)) {
+      disableOpfs('файл с диска не открывается');
+      await opfsDelete(id);
+      return false;
+    }
+    await putRecord({ id, type: blob.type, size: blob.size, chunks: 0, savedAt: Date.now(), store: 'opfs' });
+    return true;
+  } catch (e) {
+    await opfsDelete(id);
+    if ((e as DOMException)?.name === 'QuotaExceededError') throw new StorageError(explain(e), e);
+    console.warn('OPFS: запись не удалась, сохраняю по-старому', e);
+    return false;
+  }
 }
 const chunkKey = (id: string, i: number) => `${id}|${String(i).padStart(6, '0')}`;
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -136,9 +186,17 @@ function readBytes(blob: Blob): Promise<ArrayBuffer> {
   });
 }
 
-/** Сохранить файл кусками. Метка `files` пишется последней — значит, файл записан целиком. */
+/**
+ * Сохранить файл: на диск (OPFS), а если нельзя — кусками в IndexedDB.
+ * Метка `files` пишется последней — значит, файл записан целиком.
+ */
 export async function putMedia(id: string, blob: Blob, onProgress?: (v: number) => void): Promise<void> {
   await deleteMediaData(id);
+  if (await tryOpfs(id, blob, onProgress)) return;
+  await putChunks(id, blob, onProgress);
+}
+
+async function putChunks(id: string, blob: Blob, onProgress?: (v: number) => void): Promise<void> {
   const n = Math.max(1, Math.ceil(blob.size / CHUNK));
   for (let i = 0; i < n; i++) {
     let buf: ArrayBuffer;
@@ -152,14 +210,42 @@ export async function putMedia(id: string, blob: Blob, onProgress?: (v: number) 
     });
     onProgress?.((i + 1) / n);
   }
-  const rec: FileRecord = { id, type: blob.type, size: blob.size, chunks: n, savedAt: Date.now() };
-  await tx<void>(['files'], 'readwrite', (t) => {
-    t.objectStore('files').put(rec);
-  });
+  await putRecord({ id, type: blob.type, size: blob.size, chunks: n, savedAt: Date.now(), store: 'idb' });
+}
+
+const migrating = new Set<string>();
+/** Старый проект: перенести файл из кусков на диск в фоне — следующие открытия без нагрузки на память */
+function migrateToDisk(id: string, blob: Blob): void {
+  if (!opfsEnabled() || migrating.has(id)) return;
+  migrating.add(id);
+  (async () => {
+    try {
+      await opfsWrite(id, blob);
+      const f = await opfsRead(id, blob.size, blob.type);
+      if (!f) throw new Error('не прочитался');
+      if (await diskCopyBroken(blob, f)) {
+        disableOpfs('файл с диска не открывается');
+        throw new Error('не открывается');
+      }
+      await putRecord({ id, type: blob.type, size: blob.size, chunks: 0, savedAt: Date.now(), store: 'opfs' });
+      await tx<void>(['chunks'], 'readwrite', (t) => {
+        t.objectStore('chunks').delete(IDBKeyRange.bound(`${id}|`, `${id}|~`));
+      });
+    } catch {
+      await opfsDelete(id);
+    } finally {
+      migrating.delete(id);
+    }
+  })();
 }
 
 export async function getMedia(id: string): Promise<Blob> {
   const rec = await tx<FileRecord | undefined>(['files'], 'readonly', (t) => t.objectStore('files').get(id));
+  if (rec?.store === 'opfs') {
+    const f = await opfsRead(id, rec.size, rec.type);
+    if (!f) throw new StorageError('Файл проекта не найден на устройстве. Возможно, браузер очистил данные сайта.');
+    return f;
+  }
   if (rec) {
     let blob = new Blob([], { type: rec.type });
     for (let i = 0; i < rec.chunks; i++) {
@@ -169,6 +255,7 @@ export async function getMedia(id: string): Promise<Blob> {
       blob = new Blob([blob, buf], { type: rec.type });
     }
     if (blob.size !== rec.size) throw new StorageError('Файл проекта повреждён: размер не совпадает.');
+    migrateToDisk(id, blob);
     return blob;
   }
 
@@ -187,6 +274,7 @@ export async function getMedia(id: string): Promise<Blob> {
 }
 
 async function deleteMediaData(id: string): Promise<void> {
+  await opfsDelete(id);
   await tx<void>(['files', 'chunks', 'media'], 'readwrite', (t) => {
     t.objectStore('files').delete(id);
     t.objectStore('chunks').delete(IDBKeyRange.bound(`${id}|`, `${id}|~`));
@@ -237,10 +325,11 @@ export function deleteMedia(mediaId: string): Promise<void> {
   return deleteMediaData(mediaId);
 }
 
-export function clearAll(): Promise<void> {
-  return tx<void>(['projects', 'media', 'files', 'chunks'], 'readwrite', (t) => {
+export async function clearAll(): Promise<void> {
+  await tx<void>(['projects', 'media', 'files', 'chunks'], 'readwrite', (t) => {
     ['projects', 'media', 'files', 'chunks'].forEach((n) => t.objectStore(n).clear());
   });
+  await opfsClear();
 }
 
 /** Просим браузер не удалять данные при нехватке места (Safari 17+, Chrome). */

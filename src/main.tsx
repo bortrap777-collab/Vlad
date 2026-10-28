@@ -2,8 +2,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { requestPersistence } from './lib/db';
+import { installGlobalErrorLog } from './app/errors';
 import './styles/tokens.css';
 import './styles/app.css';
+
+installGlobalErrorLog();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

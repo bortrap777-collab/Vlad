@@ -60,8 +60,8 @@ export const AI_TOOLS: AiToolSpec[] = [
     icon: 'captions',
     media: 'video',
     requirements: [
-      { kind: 'api', title: 'API распознавания речи', detail: 'Рекомендуется. Нужен API-ключ сервиса с русским языком и метками времени (OpenAI Whisper, Deepgram, AssemblyAI). Звук отправляется в сервис; у OpenAI около $0,006 за минуту.' },
-      { kind: 'on-device', title: 'Whisper на устройстве', detail: 'Бесплатно и офлайн, но модель 150–250 МБ и на iPhone работает медленнее реального времени. Только для коротких роликов.' },
+      { kind: 'on-device', title: 'Whisper на устройстве', detail: 'Работает: редактор видео → «Субтитры». Быстрая модель base — 77 МБ, точная small — 249 МБ (ошибок в русском примерно в 2,4 раза меньше, но медленнее и нужно больше памяти). Скачивается один раз, дальше офлайн; звук никуда не отправляется.' },
+      { kind: 'api', title: 'API распознавания речи', detail: 'Не подключено. Даст лучшее качество на длинных роликах, но звук уходит в сервис и нужен платный ключ.' },
     ],
   },
   {
@@ -83,6 +83,14 @@ const providers: AiProvider[] = [
   { ...(isnetProvider as AiProvider), tool: 'bg-replace' },
   // Сами вызовы моделей — в providers/objects.ts, инструмент «Объекты» фоторедактора
   { id: 'mobilesam-on-device', tool: 'object-select', kind: 'on-device', title: 'MobileSAM на устройстве', isAvailable: () => aiAssetsReady('select'), run: () => Promise.reject(new Error('Используется в редакторе фото')) },
+  {
+    id: 'whisper-on-device',
+    tool: 'captions',
+    kind: 'on-device',
+    title: 'Whisper на устройстве',
+    isAvailable: async () => (await aiAssetsReady('speech')) || (await aiAssetsReady('speech-hq')),
+    run: () => Promise.reject(new Error('Используется в редакторе видео')),
+  },
   { id: 'migan-on-device', tool: 'object-erase', kind: 'on-device', title: 'MI-GAN на устройстве', isAvailable: () => aiAssetsReady('erase'), run: () => Promise.reject(new Error('Используется в редакторе фото')) },
 ];
 

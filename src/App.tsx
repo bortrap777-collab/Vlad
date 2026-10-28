@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavProvider, useNav, type Route } from './app/nav';
 import { ThemeProvider } from './app/theme';
 import { UiProvider } from './components/ui';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { HomeScreen } from './features/home/HomeScreen';
 import { VideoEditorScreen } from './features/video/VideoEditorScreen';
 import { PhotoEditorScreen } from './features/photo/PhotoEditorScreen';
@@ -27,11 +28,13 @@ function renderRoute(r: Route) {
 }
 
 function Screens() {
-  const { route, depth, direction } = useNav();
+  const { route, depth, direction, home } = useNav();
   // Ключ по глубине стека: после импорта (replace) экран не пересоздаётся.
   return (
     <main className={`stage nav-${direction}`} key={`${depth}-${route.name}`}>
-      {renderRoute(route)}
+      <ErrorBoundary where={route.name} onHome={home}>
+        {renderRoute(route)}
+      </ErrorBoundary>
     </main>
   );
 }

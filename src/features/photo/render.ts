@@ -129,7 +129,7 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 function isNeutral(p: PixelParams): boolean {
-  return Math.abs(p.b - 1) < 1e-4 && Math.abs(p.c - 1) < 1e-4 && Math.abs(p.s - 1) < 1e-4 && !p.gray && !p.sepia && !p.temp;
+  return Math.abs(p.b - 1) < 1e-4 && Math.abs(p.c - 1) < 1e-4 && Math.abs(p.s - 1) < 1e-4 && !p.gray && !p.sepia && !p.hue && !p.temp;
 }
 
 let workerUrl: string | null = null;

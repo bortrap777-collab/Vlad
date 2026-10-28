@@ -148,8 +148,8 @@ export function useVideoProject(projectId?: string) {
       const m = metaRef.current;
       if (!m) return null;
       if (kind === 'video' && !isVideoFile(file)) throw new MediaError('Это не видеофайл.');
-      if (kind === 'audio' && !isAudioFile(file)) throw new MediaError('Это не аудиофайл. Подойдут MP3, M4A, WAV.');
-      ui.setProgress({ label: kind === 'video' ? 'Добавляю клип…' : 'Добавляю музыку…', value: 0.2 });
+      if (kind === 'audio' && !isAudioFile(file) && !isVideoFile(file)) throw new MediaError('Это не аудио и не видео. Подойдут MP3, M4A, WAV или видео со звуком.');
+      ui.setProgress({ label: kind === 'video' ? 'Добавляю клип…' : isVideoFile(file) ? 'Беру звук из видео…' : 'Добавляю музыку…', value: 0.2 });
       try {
         const info = kind === 'video' ? await readVideoInfo(file) : { ...(await readAudioInfo(file)), width: undefined, height: undefined };
         ui.setProgress({ label: 'Сохраняю на устройстве…', value: 0.6 });

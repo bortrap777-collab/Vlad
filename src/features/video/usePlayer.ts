@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Mixer } from './audio';
-import { clipStarts, locate, totalDuration, type Timeline } from './model';
+import { clipEdgeGain, clipStarts, locate, musicFadeGain, projectFadeGain, speedOf, totalDuration, type Clip, type Timeline } from './model';
+
+/** Скорость без сохранения тона — так же, как звучит экспорт */
+function setRate(el: HTMLMediaElement, rate: number) {
+  if (el.playbackRate !== rate) el.playbackRate = rate;
+  const e = el as HTMLMediaElement & { preservesPitch?: boolean; webkitPreservesPitch?: boolean };
+  if (e.preservesPitch !== false) e.preservesPitch = false;
+  if ('webkitPreservesPitch' in e && e.webkitPreservesPitch !== false) e.webkitPreservesPitch = false;
+}
 
 /**
  * Воспроизведение монтажа без перекодирования: по одному <video> на исходный файл,
@@ -34,14 +42,26 @@ export function usePlayer(timeline: Timeline, onError: (msg: string) => void) {
     }
   }, []);
 
+  /** Громкость клипа и музыки в момент T: переходы, плавные начало/конец, затухания музыки */
+  const applyGains = useCallback(
+    (T: number, i: number, c: Clip | undefined) => {
+      const t = tl.current;
+      const pf = projectFadeGain(t, T);
+      if (c) mixer.setVolume(els.current.get(c.src), c.volume * clipEdgeGain(t, i, T) * pf);
+      const m = musicEl.current;
+      if (m && t.music) mixer.setVolume(m, t.music.volume * pf * (Number.isFinite(m.duration) ? musicFadeGain(t, T, m.duration) : 1));
+    },
+    [mixer],
+  );
+
   const syncMusic = useCallback(
     (T: number, play: boolean) => {
       const m = musicEl.current;
       const mt = tl.current.music;
       if (!m || !mt) return;
-      mixer.setVolume(m, mt.volume);
-      if (Number.isFinite(m.duration) && T < m.duration - 0.05) {
-        if (Math.abs(m.currentTime - T) > 0.25) m.currentTime = T;
+      const mtime = T + (mt.offset ?? 0);
+      if (Number.isFinite(m.duration) && mtime < m.duration - 0.05) {
+        if (Math.abs(m.currentTime - mtime) > 0.25) m.currentTime = mtime;
         if (play && m.paused) m.play().catch(() => undefined);
         if (!play && !m.paused) m.pause();
       } else if (!m.paused) m.pause();
@@ -66,13 +86,14 @@ export function usePlayer(timeline: Timeline, onError: (msg: string) => void) {
       els.current.forEach((v, k) => k !== c.src && !v.paused && v.pause());
       if (el) {
         if (Math.abs(el.currentTime - loc.local) > 0.04) el.currentTime = loc.local;
-        mixer.setVolume(el, c.volume);
+        setRate(el, speedOf(c));
       }
+      applyGains(target, loc.index, c);
       setActiveSrc(c.src);
       report(target, true);
       return el ?? null;
     },
-    [mixer, report],
+    [applyGains, report],
   );
 
   const stopLoop = () => cancelAnimationFrame(raf.current);
@@ -99,7 +120,8 @@ export function usePlayer(timeline: Timeline, onError: (msg: string) => void) {
     const starts = clipStarts(t);
     if (el) {
       const local = el.currentTime;
-      if (local >= c.out - 0.03 || el.ended) {
+      const sp = speedOf(c);
+      if (local >= c.out - 0.03 * sp || el.ended) {
         const ni = i + 1;
         if (ni >= t.clips.length) {
           report(totalDuration(t), true);
@@ -112,18 +134,21 @@ export function usePlayer(timeline: Timeline, onError: (msg: string) => void) {
         if (nel !== el) el.pause();
         if (nel) {
           if (Math.abs(nel.currentTime - n.in) > 0.05) nel.currentTime = n.in;
-          mixer.setVolume(nel, n.volume);
+          setRate(nel, speedOf(n));
           nel.play().catch(() => undefined);
         }
+        applyGains(starts[ni], ni, n);
         setActiveSrc(n.src);
         report(starts[ni]);
       } else {
-        report(starts[i] + Math.max(0, local - c.in));
+        const T = starts[i] + Math.max(0, local - c.in) / sp;
+        applyGains(T, i, c);
+        report(T);
       }
     }
     if (++frameN.current % 30 === 0) syncMusic(tRef.current, true);
     raf.current = requestAnimationFrame(loop);
-  }, [mixer, pause, report, syncMusic]);
+  }, [applyGains, pause, report, syncMusic]);
 
   const play = useCallback(() => {
     const t = tl.current;
@@ -183,10 +208,12 @@ export function usePlayer(timeline: Timeline, onError: (msg: string) => void) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeline]);
 
-  // Громкость музыки меняется без перемотки
+  // Громкость и смещение музыки меняются без перемотки
   useEffect(() => {
-    if (musicEl.current && timeline.music) mixer.setVolume(musicEl.current, timeline.music.volume);
-  }, [timeline.music, mixer]);
+    const loc = locate(tl.current, tRef.current);
+    applyGains(tRef.current, loc?.index ?? 0, loc ? tl.current.clips[loc.index] : undefined);
+    syncMusic(tRef.current, playingRef.current);
+  }, [timeline.music, applyGains, syncMusic]);
 
   useEffect(() => () => stopLoop(), []);
 
@@ -198,6 +225,9 @@ export function usePlayer(timeline: Timeline, onError: (msg: string) => void) {
         if (els.current.get(id) === el) return;
         els.current.set(id, el);
         const onReady = () => {
+          // Safari на iPhone не рисует кадр, пока видео не играло и не перематывалось —
+          // крошечная перемотка показывает первый кадр сразу
+          if (el.currentTime === 0 && el.paused) el.currentTime = 0.001;
           const loc = locate(tl.current, tRef.current);
           if (loc && tl.current.clips[loc.index].src === id && !playingRef.current) showAt(tRef.current);
         };

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { Icon } from '../../components/Icon';
 import { formatTime } from '../../lib/format';
-import { clipLen, clipStarts, moveClip, totalDuration, trimClip, updateText, type Timeline as TL } from './model';
+import { TRANSITIONS, clipLen, clipStarts, hasLook, hasTransition, moveClip, speedOf, totalDuration, trimClip, updateText, type Timeline as TL } from './model';
 import type { LoadedSource } from './useVideoProject';
 
 export type Selection = { kind: 'clip'; id: string } | { kind: 'text'; id: string } | { kind: 'music' } | null;
@@ -24,6 +24,7 @@ interface Props {
   onAddClip: () => void;
   onAddMusic: () => void;
   onAddText: () => void;
+  onTransition?: (clipId: string) => void;
 }
 
 const ROW_CLIP = 56;
@@ -108,7 +109,7 @@ export function Timeline(props: Props) {
 
   /* ---------- Жесты клипов ---------- */
   type Drag =
-    | { type: 'trim'; id: string; edge: 'in' | 'out'; x0: number; v0: number; srcDur: number; start: number }
+    | { type: 'trim'; id: string; edge: 'in' | 'out'; x0: number; v0: number; srcDur: number; start: number; speed: number }
     | { type: 'move'; id: string; index: number; x0: number; dx: number; moved: boolean }
     | { type: 'text-move'; id: string; x0: number; s0: number; e0: number }
     | { type: 'text-trim'; id: string; edge: 'start' | 'end'; x0: number; v0: number };
@@ -125,7 +126,7 @@ export function Timeline(props: Props) {
     capture(e);
     const i = timeline.clips.findIndex((c) => c.id === id);
     const c = timeline.clips[i];
-    drag.current = { type: 'trim', id, edge, x0: e.clientX, v0: edge === 'in' ? c.in : c.out, srcDur: sources[c.src]?.duration ?? c.out, start: starts[i] };
+    drag.current = { type: 'trim', id, edge, x0: e.clientX, v0: edge === 'in' ? c.in : c.out, srcDur: sources[c.src]?.duration ?? c.out, start: starts[i], speed: speedOf(c) };
   };
   const onClipDown = (id: string, index: number) => (e: RPointerEvent<HTMLElement>) => {
     if (!(selection?.kind === 'clip' && selection.id === id)) return; // невыбранный клип — обычная прокрутка
@@ -149,11 +150,12 @@ export function Timeline(props: Props) {
     if (!d) return;
     const dt = (e.clientX - d.x0) / pps;
     if (d.type === 'trim') {
-      const value = d.v0 + dt;
+      // Палец двигается по шкале, а обрезка — в секундах исходника (с учётом скорости)
+      const value = d.v0 + dt * d.speed;
       live((t) => trimClip(t, d.id, d.edge, value, d.srcDur));
       // Показываем кадр на месте среза
       const c = timeline.clips.find((x) => x.id === d.id);
-      if (c) onScrub(d.edge === 'in' ? d.start : d.start + Math.max(0, Math.min(d.srcDur, value) - c.in) - 0.02);
+      if (c) onScrub(d.edge === 'in' ? d.start : d.start + Math.max(0, Math.min(d.srcDur, value) - c.in) / d.speed - 0.02);
     } else if (d.type === 'move') {
       const dx = e.clientX - d.x0;
       if (!d.moved && Math.abs(dx) < 8) return;
@@ -242,12 +244,15 @@ export function Timeline(props: Props) {
                   role="button"
                   aria-label={`Клип ${i + 1}, ${formatTime(clipLen(c))}`}
                 >
-                  <div className="tl-strip" style={{ left: -c.in * pps, width: srcDur * pps }}>
+                  <div className="tl-strip" style={{ left: (-c.in * pps) / speedOf(c), width: (srcDur * pps) / speedOf(c) }}>
                     {frames.length ? frames.map((f, k) => <img key={k} src={f} alt="" draggable={false} />) : <span className="frame-ph" />}
                   </div>
-                  {c.volume === 0 && (
+                  {(c.volume === 0 || speedOf(c) !== 1 || hasLook(c)) && (
                     <span className="tl-badge">
-                      <Icon name="music" size={12} /> выкл
+                      {speedOf(c) !== 1 && <b>{String(speedOf(c)).replace('.', ',')}×</b>}
+                      {hasLook(c) && <Icon name="filters" size={12} />}
+                      {c.volume === 0 && <Icon name="music" size={12} />}
+                      {c.volume === 0 && 'выкл'}
                     </span>
                   )}
                   {selected && (
@@ -258,6 +263,25 @@ export function Timeline(props: Props) {
                     </>
                   )}
                 </div>
+              );
+            })}
+            {/* Переходы между клипами: нажатие открывает выбор эффекта */}
+            {timeline.clips.slice(1).map((c, k) => {
+              const on = hasTransition(c);
+              return (
+                <button
+                  key={'tr' + c.id}
+                  className={`tl-trans ${on ? 'is-on' : ''}`}
+                  style={{ left: starts[k + 1] * pps }}
+                  aria-label={on ? `Переход: ${TRANSITIONS.find((x) => x.id === c.transition)?.label}` : 'Добавить переход'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUserInteract();
+                    props.onTransition?.(c.id);
+                  }}
+                >
+                  <Icon name={on ? 'transition' : 'plus'} size={on ? 13 : 12} stroke={2.6} />
+                </button>
               );
             })}
             <button className="tl-add" style={{ left: contentW + 8 }} onClick={props.onAddClip} aria-label="Добавить клип">
@@ -272,7 +296,7 @@ export function Timeline(props: Props) {
               return (
                 <div
                   key={t.id}
-                  className={`tl-bar tl-bar-text ${selected ? 'is-selected' : ''}`}
+                  className={`tl-bar tl-bar-text ${t.subtitle ? 'tl-bar-sub' : ''} ${selected ? 'is-selected' : ''}`}
                   style={{ left: t.start * pps, width: Math.max(12, (t.end - t.start) * pps) }}
                   onClick={(e) => {
                     e.stopPropagation();

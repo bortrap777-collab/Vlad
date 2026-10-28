@@ -11,6 +11,8 @@ const MODELS: { pack: AiPack; title: string; icon: string; tool: string }[] = [
   { pack: 'segment', title: 'Фон · ISNet', icon: 'cutout', tool: 'background' },
   { pack: 'select', title: 'Выделение · MobileSAM', icon: 'target', tool: 'objects' },
   { pack: 'erase', title: 'Удаление · MI-GAN', icon: 'eraser', tool: 'objects' },
+  { pack: 'speech', title: 'Субтитры · Whisper base', icon: 'captions', tool: 'video' },
+  { pack: 'speech-hq', title: 'Субтитры точнее · Whisper small', icon: 'captions', tool: 'video' },
 ];
 
 const TOOL_SCREEN: Partial<Record<AiToolId, string>> = { 'bg-remove': 'background', 'bg-replace': 'background', 'object-select': 'objects', 'object-erase': 'objects' };
@@ -155,6 +157,19 @@ export function AiToolsScreen() {
                 <p className="muted small">Статус: не подключено. {NEXT_STEP[open.id]}</p>
                 <button className="btn btn-primary btn-block" onClick={() => setOpen(null)}>
                   Понятно
+                </button>
+              </>
+            ) : open.media === 'video' ? (
+              <>
+                <p className="muted small">{openState === 'ready' ? 'Модель на устройстве.' : 'Модель скачается при первом использовании.'} В редакторе видео: кнопка «Субтитры».</p>
+                <button
+                  className="btn btn-primary btn-block"
+                  onClick={() => {
+                    setOpen(null);
+                    nav.push({ name: 'video' });
+                  }}
+                >
+                  <Icon name="video" size={20} /> Открыть редактор видео
                 </button>
               </>
             ) : (

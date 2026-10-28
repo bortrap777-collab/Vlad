@@ -1,4 +1,5 @@
 import { Sheet } from '../../components/ui';
+import { TextSizeControl } from './TextSizeControl';
 import { Icon } from '../../components/Icon';
 import { TEXT_COLORS, TEXT_FONTS, type TextFont, type TextLayer, type TextStyle } from './pipeline';
 
@@ -77,19 +78,8 @@ export function TextSheet({
           </div>
 
           <div className="field">
-            <label className="field-label" htmlFor="text-size">
-              Размер
-            </label>
-            <input
-              id="text-size"
-              className="slider"
-              type="range"
-              min={3}
-              max={25}
-              step={0.5}
-              value={Math.round(layer.size * 200) / 2}
-              onChange={(e) => onChange({ size: Number(e.target.value) / 100 })}
-            />
+            <span className="field-label">Размер</span>
+            <TextSizeControl size={layer.size} rotation={layer.rotation} onChange={(size) => onChange({ size })} onEnd={() => undefined} onResetRotation={() => onChange({ rotation: 0 })} />
           </div>
 
           <div className="btn-pair">

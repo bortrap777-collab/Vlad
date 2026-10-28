@@ -10,7 +10,9 @@
  * не зависят от нагрузки и экспорт продолжается, если экран на секунду погас.
  */
 import { drawTexts, ensureFonts } from '../../photo/render';
-import { clipStarts, locate, totalDuration, type Timeline } from '../model';
+import { applyAdjustments, pixelParams } from '../../photo/pipeline';
+import { clipStarts, dipAt, frameRatio, hasLook, locate, lookEdits, totalDuration, transitionAt, type Timeline } from '../model';
+import { BlurHelper, drawClipFrame, drawDip, drawTransition } from '../compose';
 import type { LoadedSource } from '../useVideoProject';
 import { MIX_RATE, mixAudio } from './audioMix';
 import { muxMp4, type AudioTrack, type VideoSample } from './mp4';
@@ -48,11 +50,14 @@ export function webCodecsAvailable(): boolean {
 
 const even = (n: number) => Math.max(2, Math.floor(n / 2) * 2);
 
-function targetSize(srcW: number, srcH: number, q: ExportQuality): [number, number] {
+/**
+ * Размер кадра: пропорция — из формата проекта, короткая сторона — как у исходника
+ * (не больше выбранного качества). 9:16 из видео 1920×1080 даст 1080×1920.
+ */
+function targetSize(srcW: number, srcH: number, q: ExportQuality, ratio: number): [number, number] {
   const cap = q === '1080' ? 1080 : q === '720' ? 720 : Infinity;
-  const short = Math.min(srcW, srcH);
-  const s = short > cap ? cap / short : 1;
-  return [even(srcW * s), even(srcH * s)];
+  const short = Math.min(Math.min(srcW, srcH), cap);
+  return ratio >= 1 ? [even(short * ratio), even(short)] : [even(short), even(short / ratio)];
 }
 
 function bitrateFor(w: number, h: number, fps: number): number {
@@ -113,11 +118,12 @@ export async function planExport(timeline: Timeline, sources: Record<string, Loa
   const first = sources[timeline.clips[0].src];
   const sw = first?.width || 1280;
   const sh = first?.height || 720;
+  const ratio = frameRatio(timeline, sw, sh);
   const notes: string[] = [];
-  let [w, h] = targetSize(sw, sh, quality);
+  let [w, h] = targetSize(sw, sh, quality, ratio);
   let codec = await supportedVideo(w, h, FPS);
   if (!codec && Math.min(w, h) > 1080) {
-    [w, h] = targetSize(sw, sh, '1080');
+    [w, h] = targetSize(sw, sh, '1080', ratio);
     codec = await supportedVideo(w, h, FPS);
     if (codec) notes.push('Устройство не кодирует такое разрешение — видео будет 1080p.');
   }
@@ -313,6 +319,69 @@ export async function exportVideo(
     if (!ctx) throw new ExportError('Браузер не дал холст для отрисовки.');
     ctx.imageSmoothingQuality = 'high';
 
+    const starts = clipStarts(timeline);
+    let missed = 0;
+    const fill = (timeline.fit ?? 'fit') === 'fill';
+    const blurBg = !fill && (timeline.background ?? 'blur') === 'blur';
+    const layout = { fill, blur: blurBg ? new BlurHelper(W, H) : null };
+    const makeLayer = () => {
+      const c = document.createElement('canvas');
+      c.width = W;
+      c.height = H;
+      const x = c.getContext('2d', { alpha: false, willReadFrequently: true });
+      if (!x) throw new ExportError('Браузер не дал холст для отрисовки.');
+      x.imageSmoothingQuality = 'high';
+      return { c, x };
+    };
+    const live = makeLayer();
+    /** Неподвижные кадры для переходов: последний кадр уходящего клипа, первый — входящего */
+    const frozen = new Map<string, HTMLCanvasElement>();
+
+    /** Кадр клипа i в момент исходника `local` → в ctx (фон, вписывание, фильтр клипа) */
+    const renderClip = async (target: CanvasRenderingContext2D, i: number, local: number) => {
+      const c = timeline.clips[i];
+      const v = els.get(c.src)!;
+      if (!(await waitSeek(v, local))) missed++;
+      let r: { x: number; y: number; w: number; h: number };
+      try {
+        r = drawClipFrame(target, v, W, H, layout);
+      } catch {
+        missed++;
+        return;
+      }
+      // Фильтр и цвет клипа — те же формулы, что в предпросмотре и фоторедакторе
+      if (hasLook(c)) {
+        const x0 = Math.max(0, Math.floor(r.x));
+        const y0 = Math.max(0, Math.floor(r.y));
+        const rw = Math.min(W, Math.ceil(r.x + r.w)) - x0;
+        const rh = Math.min(H, Math.ceil(r.y + r.h)) - y0;
+        if (rw > 0 && rh > 0) {
+          const img = target.getImageData(x0, y0, rw, rh);
+          applyAdjustments(img.data, pixelParams(lookEdits(c.look)));
+          target.putImageData(img, x0, y0);
+        }
+      }
+    };
+    const localAt = (i: number, T: number) => {
+      const c = timeline.clips[i];
+      const v = els.get(c.src)!;
+      return Math.min(c.in + Math.max(0, T - starts[i]) * (c.speed || 1), Math.max(c.in, Math.min(c.out, v.duration || c.out) - 0.5 / plan.fps));
+    };
+    const frozenFrame = async (i: number, which: 'first' | 'last') => {
+      const key = `${i}:${which}`;
+      let cv = frozen.get(key);
+      if (!cv) {
+        const c = timeline.clips[i];
+        const v = els.get(c.src)!;
+        const t = which === 'first' ? c.in : Math.max(c.in, Math.min(c.out, v.duration || c.out) - 0.5 / plan.fps);
+        const layer = makeLayer();
+        await renderClip(layer.x, i, t);
+        cv = layer.c;
+        frozen.set(key, cv);
+      }
+      return cv;
+    };
+
     const samples: VideoSample[] = [];
     let description: Uint8Array | undefined;
     let failure: unknown = null;
@@ -342,8 +411,6 @@ export async function exportVideo(
     });
 
     const frames = Math.max(1, Math.round(total * plan.fps));
-    const starts = clipStarts(timeline);
-    let missed = 0;
     let lastReport = 0;
     for (let i = 0; i < frames; i++) {
       if (signal.aborted) {
@@ -353,26 +420,26 @@ export async function exportVideo(
       if (failure) break;
       const T = i / plan.fps;
       const loc = locate(timeline, T);
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, W, H);
-      if (loc) {
-        const c = timeline.clips[loc.index];
-        const v = els.get(c.src)!;
-        const local = Math.min(c.in + (T - starts[loc.index]), Math.max(c.in, (v.duration || c.out) - 0.5 / plan.fps));
-        if (!(await waitSeek(v, local))) missed++;
-        const vw = v.videoWidth || W;
-        const vh = v.videoHeight || H;
-        const s = Math.min(W / vw, H / vh);
-        const dw = vw * s;
-        const dh = vh * s;
-        try {
-          ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
-        } catch {
-          missed++;
-        }
+      const tr = transitionAt(timeline, T);
+      if (loc && tr) {
+        // Переход: живой кадр текущего клипа + неподвижный кадр соседнего
+        await renderClip(live.x, loc.index, localAt(loc.index, T));
+        const incoming = loc.index === tr.index;
+        const still = incoming ? await frozenFrame(tr.index - 1, 'last') : await frozenFrame(tr.index, 'first');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, W, H);
+        drawTransition(ctx, tr.type, tr.p, incoming ? still : live.c, incoming ? live.c : still, W, H);
+      } else if (loc) {
+        await renderClip(ctx, loc.index, localAt(loc.index, T));
+        if (frozen.size) frozen.clear();
+      } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, W, H);
       }
       const active = texts.filter((t) => T >= t.start && T < t.end);
       if (active.length) drawTexts(ctx, active, W, H);
+      const dip = dipAt(timeline, T);
+      drawDip(ctx, dip.color, dip.alpha, W, H);
 
       const frame = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / plan.fps), duration: Math.round(1e6 / plan.fps) });
       enc.encode(frame, { keyFrame: i % (plan.fps * 2) === 0 });

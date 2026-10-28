@@ -6,6 +6,8 @@ import { usePref } from '../../lib/storage';
 import { APP_STAGE, APP_VERSION, FEATURES } from '../../app/features';
 import { clearAll, notifyProjectsChanged, requestPersistence, storageEstimate } from '../../lib/db';
 import { formatBytes } from '../../lib/format';
+import { clearErrors, errorReport, readErrors } from '../../app/errors';
+import { opfsSupported } from '../../lib/fileStore';
 
 type Quality = 'original' | '1080' | '720';
 const QUALITY: { id: Quality; title: string; sub: string }[] = [
@@ -27,6 +29,23 @@ export function SettingsScreen() {
   const [sheet, setSheet] = useState<'quality' | 'lang' | 'about' | 'clear' | null>(null);
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
   const [persist, setPersist] = useState<boolean | null>(null);
+  const [errCount, setErrCount] = useState(() => readErrors().length);
+  const diskStore = (() => {
+    try {
+      return opfsSupported() && localStorage.getItem('ws.opfsOff') !== '1';
+    } catch {
+      return opfsSupported();
+    }
+  })();
+
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(errorReport());
+      ui.toast('Отчёт скопирован — пришлите его в чат', 'ok');
+    } catch {
+      ui.toast('Не удалось скопировать: браузер запретил доступ к буферу обмена', 'error');
+    }
+  };
 
   useEffect(() => {
     if (sheet !== 'about') return;
@@ -159,6 +178,30 @@ export function SettingsScreen() {
             <span>Защита от автоочистки</span>
             <b>{persist === null ? 'не поддерживается' : persist ? 'включена' : 'не разрешена браузером'}</b>
           </div>
+          <div className="kv">
+            <span>Хранение файлов</span>
+            <b>{diskStore ? 'на диске устройства' : 'в базе браузера'}</b>
+          </div>
+          <div className="kv">
+            <span>Журнал ошибок</span>
+            <b>{errCount ? `${errCount} записей` : 'пусто'}</b>
+          </div>
+          {errCount > 0 && (
+            <div className="btn-pair">
+              <button className="btn btn-soft" onClick={copyReport}>
+                Скопировать отчёт
+              </button>
+              <button
+                className="btn btn-soft"
+                onClick={() => {
+                  clearErrors();
+                  setErrCount(0);
+                }}
+              >
+                Очистить
+              </button>
+            </div>
+          )}
           <button className="btn btn-danger-soft btn-block" onClick={() => setSheet('clear')}>
             <Icon name="trash" size={18} /> Удалить все проекты
           </button>

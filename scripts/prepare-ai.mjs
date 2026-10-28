@@ -7,12 +7,15 @@
  *   segment — удаление фона: ISNet (DIS) квантованная, 44 МБ;
  *   select  — выделение касанием: MobileSAM (энкодер 28 МБ) + декодер масок SAM (16,5 МБ);
  *   erase   — удаление объектов с заполнением фона: MI-GAN (Picsart AI Research), 28 МБ;
+ *   speech    — субтитры: Whisper base (OpenAI, MIT), квантованный ONNX (onnx-community), 77 МБ;
+ *   speech-hq — субтитры точнее: Whisper small, 249 МБ (файлы больше 90 МБ хранятся частями);
  *   общий движок ONNX Runtime Web (WASM) из node_modules.
  *
  * Источники моделей (файл принимается, только если SHA-256 совпадает с указанным ниже):
  *   ISNet — npm-пакет @imgly/background-removal-node (части по 4 МБ, каждая проверяется по SHA-256);
  *   MobileSAM и декодер SAM — npm-пакет @geti-ui/smart-tools (Intel Geti, Apache-2.0);
  *   MI-GAN — Hugging Face (andraniksargsyan/migan), при недоступности — копия в npm-пакете migan-onnx.
+ *   Whisper — Hugging Face (onnx-community/whisper-base, onnx-community/whisper-small).
  *
  *   node scripts/prepare-ai.mjs
  */
@@ -100,16 +103,77 @@ if (!valid(MIGAN.name, MIGAN.sha256)) {
   }
 }
 
+/* ---------- Whisper: субтитры ---------- */
+const HF = 'https://huggingface.co/onnx-community';
+const WHISPER = [
+  { name: 'whisper-base-encoder-q8.onnx', url: `${HF}/whisper-base/resolve/main/onnx/encoder_model_quantized.onnx`, sha256: '5862993336bf33acd23736071aae2b32261d3b1b2f37780194460d4ef974dd46' },
+  { name: 'whisper-base-decoder-q8.onnx', url: `${HF}/whisper-base/resolve/main/onnx/decoder_model_merged_quantized.onnx`, sha256: 'fa3ef9902734ce5ae6f9ef2bdb2ba9a6c4b5785b09f4f420ce036573dc9d090b' },
+  { name: 'whisper-base-generation.json', url: `${HF}/whisper-base/resolve/main/generation_config.json`, sha256: '61070cf8de25b1e9256e8e102ded49d8d24a8369ed36ef84fdf21549e68125a0' },
+  { name: 'whisper-vocab.json', url: `${HF}/whisper-base/resolve/main/vocab.json`, sha256: '50d6a919f0a0601d56a04eb583c780d18553aa388254ba3158eb6a00f13e2c1a' },
+  { name: 'whisper-small-encoder-q8.onnx', url: `${HF}/whisper-small/resolve/main/onnx/encoder_model_quantized.onnx`, sha256: 'a43a83f3c5361cd591cfa7c36f14b43cf7cb22f47a415cc14a8d557be800fa92' },
+  { name: 'whisper-small-decoder-q8.onnx', url: `${HF}/whisper-small/resolve/main/onnx/decoder_model_merged_quantized.onnx`, sha256: 'ec07c3cbb64172c39791e26ee870a65ac22b458c36722bfe2776b3dbf741e0c9' },
+  { name: 'whisper-small-generation.json', url: `${HF}/whisper-small/resolve/main/generation_config.json`, sha256: 'f538b28220c6a6d6f1af1458d4141cacb4ef4963df3de98a19490440c412ddf0' },
+];
+/** Файл уже нарезан на части прошлой сборкой и части целы */
+function partsValid(f) {
+  const parts = [];
+  for (let k = 0; existsSync(join(out, `${f.name}.part${k}`)); k++) parts.push(readFileSync(join(out, `${f.name}.part${k}`)));
+  return parts.length > 0 && sha256(Buffer.concat(parts)) === f.sha256;
+}
+for (const f of WHISPER) {
+  if (valid(f.name, f.sha256) || partsValid(f)) continue;
+  let buf = null;
+  for (let attempt = 1; attempt <= 3 && !buf; attempt++) {
+    try {
+      const res = await fetch(f.url, { signal: AbortSignal.timeout(600_000) });
+      if (!res.ok) throw new Error(String(res.status));
+      const b = Buffer.from(await res.arrayBuffer());
+      if (sha256(b) !== f.sha256) throw new Error('контрольная сумма не совпала');
+      buf = b;
+    } catch (e) {
+      console.log(`${f.name}: попытка ${attempt} — ${e.message}`);
+    }
+  }
+  if (!buf) throw new Error(`Не удалось скачать ${f.name}`);
+  writeFileSync(join(out, f.name), buf);
+  console.log(`${f.name} — с Hugging Face`);
+}
+/** Файлы больше 90 МБ публикуем частями: так их надёжно отдаёт любой хостинг и кэш браузера */
+const PART = 90 * 1024 * 1024;
+function partsOf(name) {
+  if (!existsSync(join(out, name))) {
+    const names = [];
+    for (let k = 0; existsSync(join(out, `${name}.part${k}`)); k++) names.push(`${name}.part${k}`);
+    return names;
+  }
+  const buf = readFileSync(join(out, name));
+  if (buf.length <= PART) return [name];
+  const names = [];
+  for (let i = 0, k = 0; i < buf.length; i += PART, k++) {
+    const part = `${name}.part${k}`;
+    writeFileSync(join(out, part), buf.subarray(i, Math.min(buf.length, i + PART)));
+    names.push(part);
+  }
+  rmSync(join(out, name));
+  return names;
+}
+const smallEnc = partsOf('whisper-small-encoder-q8.onnx');
+const smallDec = partsOf('whisper-small-decoder-q8.onnx');
+
 /* ---------- Движок ---------- */
 const WASM = 'ort-wasm-simd-threaded.wasm';
 copyFileSync(join(root, 'node_modules/onnxruntime-web/dist', WASM), join(out, WASM));
 
+const speechBase = ['whisper-base-encoder-q8.onnx', 'whisper-base-decoder-q8.onnx', 'whisper-base-generation.json', 'whisper-vocab.json'];
+const speechSmall = [...smallEnc, ...smallDec, 'whisper-small-generation.json', 'whisper-vocab.json'];
 const packs = {
   segment: [ISNET.name, WASM],
   select: [...SAM.map((f) => f.name), WASM],
   erase: [MIGAN.name, WASM],
+  speech: [...speechBase, WASM],
+  'speech-hq': [...speechSmall, WASM],
 };
-const names = [ISNET.name, ...SAM.map((f) => f.name), MIGAN.name, WASM];
+const names = [...new Set([ISNET.name, ...SAM.map((f) => f.name), MIGAN.name, ...speechBase, ...speechSmall, WASM])];
 const files = names.map((name) => {
   const buf = readFileSync(join(out, name));
   return { name, size: buf.length, sha256: sha256(buf), packs: Object.keys(packs).filter((p) => packs[p].includes(name)) };

@@ -1,7 +1,7 @@
 {
   "name": "w-studio",
   "private": true,
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "W Studio — мобильный редактор фото и видео (PWA)",
   "type": "module",
   "scripts": {

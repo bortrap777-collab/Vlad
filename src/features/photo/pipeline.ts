@@ -62,7 +62,30 @@ export interface PhotoEdits {
   stack: LayerStack | null;
 }
 
-export type PresetId = 'original' | 'vivid' | 'warm' | 'cool' | 'mono' | 'film';
+export type PresetId =
+  | 'original'
+  | 'vivid'
+  | 'warm'
+  | 'cool'
+  | 'mono'
+  | 'film'
+  | 'bright'
+  | 'pop'
+  | 'sunset'
+  | 'gold'
+  | 'rose'
+  | 'ice'
+  | 'mint'
+  | 'night'
+  | 'cinema'
+  | 'drama'
+  | 'matte'
+  | 'retro'
+  | 'vintage'
+  | 'sepia'
+  | 'noir'
+  | 'silver'
+  | 'neon';
 
 export interface Preset {
   id: PresetId;
@@ -73,15 +96,46 @@ export interface Preset {
   t: number;
   gray?: number;
   sepia?: number;
+  /** Поворот оттенка, градусы (как CSS hue-rotate) */
+  hue?: number;
+  /** Группа в ленте фильтров */
+  group?: 'color' | 'warm' | 'cool' | 'mood' | 'retro' | 'bw';
 }
 
 export const PRESETS: Preset[] = [
   { id: 'original', name: 'Оригинал', b: 1, c: 1, s: 1, t: 0 },
-  { id: 'vivid', name: 'Яркий', b: 1.04, c: 1.1, s: 1.38, t: 0 },
-  { id: 'warm', name: 'Тёплый', b: 1.03, c: 1.02, s: 1.1, t: 38 },
-  { id: 'cool', name: 'Холодный', b: 1, c: 1.04, s: 0.92, t: -38 },
-  { id: 'mono', name: 'Ч/Б', b: 1.02, c: 1.12, s: 1, t: 0, gray: 1 },
-  { id: 'film', name: 'Плёнка', b: 1.02, c: 0.9, s: 0.82, t: 12, sepia: 0.18 },
+  { id: 'vivid', name: 'Яркий', b: 1.04, c: 1.1, s: 1.38, t: 0, group: 'color' },
+  { id: 'pop', name: 'Сочный', b: 1.03, c: 1.18, s: 1.62, t: 0, group: 'color' },
+  { id: 'bright', name: 'Светлый', b: 1.13, c: 0.94, s: 1.06, t: 4, group: 'color' },
+  { id: 'warm', name: 'Тёплый', b: 1.03, c: 1.02, s: 1.1, t: 38, group: 'warm' },
+  { id: 'sunset', name: 'Закат', b: 1.02, c: 1.08, s: 1.22, t: 58, group: 'warm' },
+  { id: 'gold', name: 'Золото', b: 1.04, c: 1.06, s: 1.15, t: 42, sepia: 0.12, group: 'warm' },
+  { id: 'rose', name: 'Роза', b: 1.05, c: 0.98, s: 1.1, t: 18, hue: -12, group: 'warm' },
+  { id: 'cool', name: 'Холодный', b: 1, c: 1.04, s: 0.92, t: -38, group: 'cool' },
+  { id: 'ice', name: 'Лёд', b: 1.06, c: 1.05, s: 0.78, t: -58, group: 'cool' },
+  { id: 'mint', name: 'Мята', b: 1.04, c: 1.02, s: 1.05, t: -14, hue: -14, group: 'cool' },
+  { id: 'night', name: 'Ночь', b: 0.88, c: 1.14, s: 0.74, t: -42, group: 'cool' },
+  { id: 'cinema', name: 'Кино', b: 0.97, c: 1.16, s: 0.9, t: -12, hue: 4, group: 'mood' },
+  { id: 'drama', name: 'Драма', b: 0.95, c: 1.32, s: 0.82, t: 0, group: 'mood' },
+  { id: 'matte', name: 'Матовый', b: 1.08, c: 0.78, s: 0.84, t: 6, group: 'mood' },
+  { id: 'neon', name: 'Неон', b: 1.02, c: 1.16, s: 1.32, t: -22, hue: -28, group: 'mood' },
+  { id: 'film', name: 'Плёнка', b: 1.02, c: 0.9, s: 0.82, t: 12, sepia: 0.18, group: 'retro' },
+  { id: 'retro', name: 'Ретро', b: 1.03, c: 0.92, s: 0.9, t: 26, sepia: 0.34, group: 'retro' },
+  { id: 'vintage', name: 'Винтаж', b: 1.07, c: 0.84, s: 0.7, t: 18, sepia: 0.26, group: 'retro' },
+  { id: 'sepia', name: 'Сепия', b: 1.02, c: 1.05, s: 1, t: 0, sepia: 0.9, group: 'retro' },
+  { id: 'mono', name: 'Ч/Б', b: 1.02, c: 1.12, s: 1, t: 0, gray: 1, group: 'bw' },
+  { id: 'noir', name: 'Нуар', b: 0.94, c: 1.48, s: 1, t: 0, gray: 1, group: 'bw' },
+  { id: 'silver', name: 'Серебро', b: 1.09, c: 0.88, s: 1, t: 0, gray: 1, group: 'bw' },
+];
+
+export const PRESET_GROUPS: { id: NonNullable<Preset['group']> | 'all'; label: string }[] = [
+  { id: 'all', label: 'Все' },
+  { id: 'color', label: 'Яркие' },
+  { id: 'warm', label: 'Тёплые' },
+  { id: 'cool', label: 'Холодные' },
+  { id: 'mood', label: 'Настроение' },
+  { id: 'retro', label: 'Ретро' },
+  { id: 'bw', label: 'Ч/Б' },
 ];
 
 export const DEFAULT_EDITS: PhotoEdits = {
@@ -115,6 +169,8 @@ export interface PixelParams {
   s: number;
   gray: number;
   sepia: number;
+  /** Поворот оттенка, градусы */
+  hue: number;
   /** Цвет слоя температуры (0…1) и непрозрачность, или null */
   temp: { r: number; g: number; b: number; o: number } | null;
 }
@@ -141,6 +197,7 @@ export function pixelParams(e: Adjust, presetOverride?: PresetId): PixelParams {
     s: Math.max(0, p.s * (1 + e.saturation / 100)),
     gray: p.gray ?? 0,
     sepia: p.sepia ?? 0,
+    hue: p.hue ?? 0,
     temp,
   };
 }
@@ -150,6 +207,7 @@ export function toCssFilter(e: Adjust, presetOverride?: PresetId): string {
   const parts = [`brightness(${p.b.toFixed(3)})`, `contrast(${p.c.toFixed(3)})`, `saturate(${p.s.toFixed(3)})`];
   if (p.gray) parts.push(`grayscale(${p.gray})`);
   if (p.sepia) parts.push(`sepia(${p.sepia})`);
+  if (p.hue) parts.push(`hue-rotate(${p.hue}deg)`);
   return parts.join(' ');
 }
 
@@ -259,7 +317,7 @@ function boxBlur(d: Uint8ClampedArray, w: number, h: number, r: number, horizont
 /**
  * Попиксельная обработка RGBA. Функция самодостаточна (без внешних ссылок):
  * её исходный код передаётся в Web Worker как строка.
- * Порядок как в CSS: brightness → contrast → saturate → grayscale → sepia → soft-light.
+ * Порядок как в CSS: brightness → contrast → saturate → grayscale → sepia → hue-rotate → soft-light.
  */
 export function applyAdjustments(d: Uint8ClampedArray, p: PixelParams, onProgress?: (v: number) => void): void {
   const lut = new Float32Array(256);
@@ -283,6 +341,17 @@ export function applyAdjustments(d: Uint8ClampedArray, p: PixelParams, onProgres
       0.393 + 0.607 * a, 0.769 - 0.769 * a, 0.189 - 0.189 * a,
       0.349 - 0.349 * a, 0.686 + 0.314 * a, 0.168 - 0.168 * a,
       0.272 - 0.272 * a, 0.534 - 0.534 * a, 0.131 + 0.869 * a,
+    ], m);
+  }
+  if (p.hue) {
+    // Матрица hue-rotate из спецификации Filter Effects
+    const rad = (p.hue * Math.PI) / 180;
+    const cs = Math.cos(rad);
+    const sn = Math.sin(rad);
+    m = mul([
+      0.213 + cs * 0.787 - sn * 0.213, 0.715 - cs * 0.715 - sn * 0.715, 0.072 - cs * 0.072 + sn * 0.928,
+      0.213 - cs * 0.213 + sn * 0.143, 0.715 + cs * 0.285 + sn * 0.14, 0.072 - cs * 0.072 - sn * 0.283,
+      0.213 - cs * 0.213 - sn * 0.787, 0.715 - cs * 0.715 + sn * 0.715, 0.072 + cs * 0.928 + sn * 0.072,
     ], m);
   }
 

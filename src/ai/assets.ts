@@ -11,9 +11,10 @@
  */
 import type { AiProgress } from './types';
 
-/** segment — удаление фона, select — выделение касанием, erase — удаление объектов */
-export type AiPack = 'segment' | 'select' | 'erase';
-export const AI_PACKS: AiPack[] = ['segment', 'select', 'erase'];
+/** segment — удаление фона, select — выделение касанием, erase — удаление объектов,
+ *  speech / speech-hq — распознавание речи для субтитров (быстрая / точная модель) */
+export type AiPack = 'segment' | 'select' | 'erase' | 'speech' | 'speech-hq';
+export const AI_PACKS: AiPack[] = ['segment', 'select', 'erase', 'speech', 'speech-hq'];
 
 export interface AiFile {
   name: string;
@@ -186,4 +187,23 @@ export async function deleteAiAssets(pack: AiPack): Promise<void> {
   for (const p of AI_PACKS) if (p !== pack && (await aiAssetsReady(p))) packFiles(m, p).forEach((f) => keep.add(f.name));
   const cache = await caches.open(CACHE);
   for (const f of packFiles(m, pack)) if (!keep.has(f.name)) await cache.delete(keyFor(f));
+}
+
+/** Файл набора, который мог быть опубликован частями (name.part0, name.part1 …) — собрать целиком */
+export async function readAiAssetJoined(pack: AiPack, prefix: string): Promise<ArrayBuffer> {
+  const m = await aiManifest();
+  const files = packFiles(m, pack)
+    .filter((f) => f.name.startsWith(prefix))
+    .sort((a, b) => (Number(a.name.match(/\.part(\d+)$/)?.[1] ?? -1) - Number(b.name.match(/\.part(\d+)$/)?.[1] ?? -1)));
+  if (!files.length) throw new AiAssetError('Файлы модели не найдены. Обновите приложение.');
+  if (files.length === 1) return readAiAsset(files[0].name);
+  const total = files.reduce((a, f) => a + f.size, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const f of files) {
+    const part = new Uint8Array(await readAiAsset(f.name));
+    out.set(part, off);
+    off += part.length;
+  }
+  return out.buffer;
 }

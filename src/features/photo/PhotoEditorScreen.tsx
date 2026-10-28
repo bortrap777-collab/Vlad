@@ -17,10 +17,24 @@ import { LayersPanel } from './LayersPanel';
 import { MaskBrush } from './MaskBrush';
 import { ObjectTool, type ObjectAction } from './ObjectTool';
 import { TextSheet } from './TextSheet';
+import { TextSizeControl } from './TextSizeControl';
 import { ExportSheet } from './ExportSheet';
 import { ASPECTS, FULL, fitAspect, isFull, rotateCropCW, type AspectId } from './geometry';
 import { blobToDataUrl, canvasPixelLimit, composeStack, makeCanvas, renderPhoto, stackHasAlpha, type RenderResult } from './render';
-import { DEFAULT_EDITS, PRESETS, blurredBackdrop, editMediaIds, isEdited, normalizeEdits, temperatureLayer, toCssFilter, type CropRect, type PhotoEdits, type TextLayer } from './pipeline';
+import {
+  DEFAULT_EDITS,
+  PRESETS,
+  PRESET_GROUPS,
+  blurredBackdrop,
+  editMediaIds,
+  isEdited,
+  normalizeEdits,
+  temperatureLayer,
+  toCssFilter,
+  type CropRect,
+  type PhotoEdits,
+  type TextLayer,
+} from './pipeline';
 import {
   NEUTRAL_ADJUST,
   addPhoto,
@@ -54,6 +68,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
   const ui = useUi();
   const { meta, blob, url, loading, error, persisted, importFile, patch, retry } = useEditorProject('photo', projectId);
   const picker = useFilePicker('image/*', importFile);
+  const [presetGroup, setPresetGroup] = useState<(typeof PRESET_GROUPS)[number]['id']>('all');
   const [panel, setPanel] = useState<Panel>(tool === 'background' ? 'background' : 'filters');
   const hist = useHistory<PhotoEdits>(DEFAULT_EDITS);
   const edits = hist.state;
@@ -443,6 +458,7 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
     setEditingText(layer.id);
     setPickedText(layer.id);
   };
+  const pickedLayer = edits.texts.find((t) => t.id === pickedText) ?? null;
   const updateText = (id: string, p: Partial<TextLayer>, end = true) => {
     hist.live((e) => ({ ...e, texts: e.texts.map((t) => (t.id === id ? { ...t, ...p } : t)) }));
     if (end) hist.endGesture();
@@ -672,8 +688,17 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
                 {adjustTargetRow}
 
                 {panel === 'filters' && (
+                  <div className="chip-row chip-row-scroll preset-groups" role="tablist" aria-label="Группы фильтров">
+                    {PRESET_GROUPS.map((g) => (
+                      <button key={g.id} role="tab" aria-selected={presetGroup === g.id} className={`pill pill-sm ${presetGroup === g.id ? 'is-active' : ''}`} onClick={() => setPresetGroup(g.id)}>
+                        {g.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {panel === 'filters' && (
                   <div className="preset-row" role="listbox" aria-label="Фильтры">
-                    {PRESETS.map((p) => {
+                    {PRESETS.filter((p) => presetGroup === 'all' || p.id === 'original' || p.group === presetGroup).map((p) => {
                       const t = temperatureLayer(NEUTRAL_ADJUST, p.id);
                       return (
                         <button
@@ -802,7 +827,16 @@ export function PhotoEditorScreen({ projectId, tool }: { projectId?: string; too
                         </button>
                       ))}
                     </div>
-                    <p className="muted small">{edits.texts.length ? 'Двигайте пальцем, двумя пальцами — размер и поворот (или ручка в углу). Нажмите ещё раз — изменить текст.' : 'Надпись появится в центре фото.'}</p>
+                    {pickedLayer ? (
+                      <TextSizeControl
+                        size={pickedLayer.size}
+                        rotation={pickedLayer.rotation}
+                        onChange={(size) => updateText(pickedLayer.id, { size }, false)}
+                        onEnd={() => hist.endGesture()}
+                        onResetRotation={() => updateText(pickedLayer.id, { rotation: 0 })}
+                      />
+                    ) : null}
+                    <p className="muted small">{edits.texts.length ? (pickedLayer ? 'Размер — ползунком или двумя пальцами. Двигайте текст пальцем; нажмите ещё раз — изменить слова.' : 'Выберите надпись, чтобы изменить размер.') : 'Надпись появится в центре фото.'}</p>
                   </div>
                 )}
 
