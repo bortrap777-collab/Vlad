@@ -1,0 +1,89 @@
+# Временная ветка: получить файлы Whisper для W Studio, посчитать SHA-256
+# и снять эталон распознавания. Не связана с публикацией сайта (ветка main).
+name: Whisper probe
+on:
+  push:
+    branches: [ci/whisper-probe]
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Файлы моделей
+        run: |
+          set -e
+          mkdir -p out/models
+          dl() { # repo file outname
+            url="https://huggingface.co/$1/resolve/main/$2"
+            if curl -fsSL --retry 3 "$url" -o "out/models/$3"; then
+              echo "::notice title=got::$3 $(stat -c%s out/models/$3) $(sha256sum out/models/$3 | cut -c1-64)"
+            else
+              echo "::warning title=missing::$1/$2"; rm -f "out/models/$3"
+            fi
+          }
+          for m in base tiny; do
+            R=onnx-community/whisper-$m
+            dl $R onnx/encoder_model_quantized.onnx whisper-$m-encoder-q8.onnx
+            dl $R onnx/decoder_model_merged_quantized.onnx whisper-$m-decoder-q8.onnx
+            dl $R config.json whisper-$m-config.json
+            dl $R generation_config.json whisper-$m-generation.json
+            dl $R preprocessor_config.json whisper-$m-preprocessor.json
+            dl $R vocab.json whisper-$m-vocab.json
+            dl $R added_tokens.json whisper-$m-added.json
+          done
+          ls -la out/models
+      - name: Движок ONNX Runtime Web
+        run: |
+          set -e
+          mkdir -p out/ort && cd out/ort
+          npm pack onnxruntime-web@1.24.3 --silent
+          tar xzf onnxruntime-web-1.24.3.tgz
+          rm onnxruntime-web-1.24.3.tgz
+          ls package/dist | head -80
+          # Оставляем только сборку wasm (её и использует приложение) и типы
+          cd package/dist && ls | grep -v -E '^(ort\.wasm\.min\.mjs|ort-wasm-simd-threaded\.(mjs|wasm)|ort\.wasm\.mjs)$' | xargs rm -rf; cd ..
+          du -sh . ; ls dist
+          echo "::notice title=ort::$(ls dist | tr '\n' ' ')"
+      - name: Тестовая речь и эталон
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq espeak-ng ffmpeg >/dev/null
+          mkdir -p out/test
+          espeak-ng -v ru -s 140 -w out/test/ru.wav "Привет! Это проверка субтитров в приложении W Studio. Сегодня мы монтируем видео прямо на телефоне. Распознавание речи работает без сервера."
+          espeak-ng -v en-us -s 150 -w out/test/en.wav "Hello and welcome. This is a subtitle test for the video editor. The weather is nice today."
+          for f in ru en; do ffmpeg -loglevel error -y -i out/test/$f.wav -ar 16000 -ac 1 out/test/$f-16k.wav; done
+          pip install -q --index-url https://download.pytorch.org/whl/cpu torch==2.5.1
+          pip install -q transformers==4.46.3 soundfile numpy
+          python - <<'PY'
+          import json, numpy as np, soundfile as sf
+          from transformers import WhisperFeatureExtractor, pipeline
+          fe = WhisperFeatureExtractor.from_pretrained('openai/whisper-base')
+          ref = {}
+          for lang in ['ru', 'en']:
+              audio, sr = sf.read(f'out/test/{lang}-16k.wav', dtype='float32')
+              feats = fe(audio, sampling_rate=16000, return_tensors='np').input_features[0].astype(np.float32)
+              feats.tofile(f'out/test/{lang}-mel.f32')
+              for m in ['base', 'tiny']:
+                  pipe = pipeline('automatic-speech-recognition', f'openai/whisper-{m}', device='cpu')
+                  r = pipe(audio.copy(), return_timestamps=True, generate_kwargs={'language': lang, 'task': 'transcribe'})
+                  ref[f'{lang}-{m}'] = {'text': r['text'], 'chunks': [{'text': c['text'], 'timestamp': list(c['timestamp'])} for c in r['chunks']]}
+                  print(f'::notice title=ref {lang}-{m}::' + r['text'][:200])
+          json.dump(ref, open('out/test/reference.json', 'w'), ensure_ascii=False, indent=1)
+          PY
+      - name: Сохранить в ветку
+        run: |
+          set -e
+          cd out && sha256sum models/* test/* > SHA256SUMS && cd ..
+          git config user.name "W Studio CI"
+          git config user.email "ci@users.noreply.github.com"
+          git add out
+          git commit -qm "Whisper: файлы моделей, движок, тестовая речь и эталон"
+          git push -q origin HEAD:ci/whisper-probe
+          echo "::notice title=done::pushed $(git rev-parse --short HEAD)"

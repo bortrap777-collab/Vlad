@@ -1,0 +1,51 @@
+# Сборка W Studio и публикация на GitHub Pages при каждом изменении main.
+name: Deploy W Studio
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Файлы ИИ (модель и движок)
+        run: node scripts/prepare-ai.mjs
+      - name: Проверка типов
+        # Ошибки выводятся пометками к запуску (видны без доступа к логам)
+        run: |
+          npx tsc -p tsconfig.json --noEmit --pretty false > tsc.txt 2>&1 || true
+          echo "TypeScript: $(grep -c 'error TS' tsc.txt || true) ошибок"
+          grep 'error TS' tsc.txt | head -40 | sed -E 's/^([^(]+)\(([0-9]+),([0-9]+)\): (.*)$/::warning file=\1,line=\2,col=\3::\4/'
+        continue-on-error: true
+      - name: Сборка
+        run: npx vite build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
