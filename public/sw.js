@@ -2,7 +2,7 @@
    Стратегия «сначала сеть»: при подключении всегда загружается свежая версия
    приложения, кэш используется только офлайн. Шрифты — из кэша (они не меняются).
    Медиа пользователя хранится в IndexedDB и сюда не попадает. */
-const CACHE = 'w-studio-shell-v5';
+const CACHE = 'w-studio-shell-v6';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon.svg', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
