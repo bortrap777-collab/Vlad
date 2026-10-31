@@ -3,10 +3,12 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { requestPersistence } from './lib/db';
 import { installGlobalErrorLog } from './app/errors';
+import { initInstall } from './app/install';
 import './styles/tokens.css';
 import './styles/app.css';
 
 installGlobalErrorLog();
+initInstall();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

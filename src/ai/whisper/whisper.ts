@@ -34,10 +34,18 @@ export interface GenerationConfig {
   max_initial_timestamp_index?: number;
 }
 
+export interface Word {
+  text: string;
+  start: number;
+  end: number;
+}
+
 export interface Segment {
   start: number;
   end: number;
   text: string;
+  /** Слова со временем — по меткам времени, которые модель предсказывает после каждого слова */
+  words?: Word[];
 }
 
 export interface TranscribeOptions {
@@ -72,17 +80,49 @@ export class WhisperTokenizer {
   constructor(vocab: Record<string, number>) {
     for (const [t, id] of Object.entries(vocab)) this.tokens[id] = t;
   }
+  bytes(id: number): number[] {
+    const out: number[] = [];
+    const t = this.tokens[id];
+    if (!t) return out;
+    for (const ch of t) {
+      const b = this.byteOf.get(ch);
+      if (b !== undefined) out.push(b);
+    }
+    return out;
+  }
   decode(ids: number[]): string {
     const bytes: number[] = [];
-    for (const id of ids) {
-      const t = this.tokens[id];
-      if (!t) continue;
-      for (const ch of t) {
-        const b = this.byteOf.get(ch);
-        if (b !== undefined) bytes.push(b);
-      }
-    }
+    for (const id of ids) bytes.push(...this.bytes(id));
     return this.utf8.decode(new Uint8Array(bytes));
+  }
+  /**
+   * Токены → слова: новое слово начинается с токена, у которого первый байт — пробел.
+   * times[i] — время конца токена i. Буквы кириллицы бывают разрезаны между токенами,
+   * поэтому слово собирается из байтов и только потом превращается в текст.
+   */
+  words(ids: number[], times: number[], start: number): Word[] {
+    const groups: { bytes: number[]; end: number }[] = [];
+    ids.forEach((id, i) => {
+      const b = this.bytes(id);
+      if (!b.length) return;
+      const isPunct = b.length <= 2 && /^[.,!?;:…»"')\]-]+$/.test(String.fromCharCode(...b));
+      if (!groups.length || (b[0] === 0x20 && !isPunct)) groups.push({ bytes: [...b], end: times[i] });
+      else {
+        const g = groups[groups.length - 1];
+        g.bytes.push(...b);
+        g.end = times[i];
+      }
+    });
+    const out: Word[] = [];
+    let prev = start;
+    for (const g of groups) {
+      const text = this.utf8.decode(new Uint8Array(g.bytes)).trim();
+      if (!text) continue;
+      const end = Math.max(prev + 0.04, g.end);
+      out.push({ text, start: prev, end });
+      prev = end;
+    }
+    return out;
   }
 }
 
@@ -179,7 +219,7 @@ export class Whisper {
    */
   private async decodeWindow(audio: Float32Array, langId: number, isCancelled?: () => boolean) {
     const enc = await this.encode(audio);
-    let best: { seq: number[]; avgLogprob: number; noSpeechProb: number; looped: boolean } | null = null;
+    let best: { seq: number[]; probes: number[]; avgLogprob: number; noSpeechProb: number; looped: boolean } | null = null;
     for (const temperature of [0, 0.4, 0.8]) {
       const r = await this.decodeOnce(enc, langId, temperature, isCancelled);
       if (!best || (best.looped && !r.looped) || (best.looped === r.looped && r.avgLogprob > best.avgLogprob)) best = r;
@@ -198,11 +238,19 @@ export class Whisper {
     // Вероятность «здесь нет речи» — по позиции <|startoftranscript|>
     const noSpeechProb = softmaxAt(r.logits.subarray(0, V), this.noCaptions);
     const seq: number[] = [];
+    /** probes[k] — время (с), которое модель ставит сразу после токена k */
+    const probes: number[] = [];
     let sumLogprob = 0;
     const maxNew = 224;
     let lastRow = r.logits.subarray((r.seq - 1) * V, r.seq * V);
+    let minTs = 0;
     for (let i = 0; i < maxNew; i++) {
       if (isCancelled?.()) throw new Error('cancelled');
+      if (seq.length) {
+        const lastTok = seq[seq.length - 1];
+        if (lastTok >= this.tsBegin) minTs = lastTok - this.tsBegin;
+        probes[seq.length - 1] = this.probe(lastRow, minTs);
+      }
       const logits = Float32Array.from(lastRow);
       this.applyRules(logits, seq);
       const { id, logprob } = temperature > 0 ? sample(logits, temperature, rnd) : argmaxWithLogprob(logits);
@@ -219,7 +267,21 @@ export class Whisper {
       r = await this.step([id], enc, r.past);
       lastRow = r.logits.subarray((r.seq - 1) * V, r.seq * V);
     }
-    return { seq, avgLogprob: sumLogprob / Math.max(1, seq.length + 1), noSpeechProb, looped };
+    if (seq.length && probes[seq.length - 1] === undefined) probes[seq.length - 1] = this.probe(lastRow, minTs);
+    return { seq, probes, avgLogprob: sumLogprob / Math.max(1, seq.length + 1), noSpeechProb, looped };
+  }
+
+  /** Самая вероятная метка времени (не раньше последней поставленной) — «где мы сейчас в записи» */
+  private probe(row: Float32Array, minIndex: number): number {
+    let best = -1;
+    let bestV = -Infinity;
+    for (let id = this.tsBegin + minIndex; id < row.length; id++) {
+      if (row[id] > bestV) {
+        bestV = row[id];
+        best = id;
+      }
+    }
+    return best < 0 ? minIndex * 0.02 : (best - this.tsBegin) * 0.02;
   }
 
   private applyRules(logits: Float32Array, seq: number[]): void {
@@ -278,17 +340,18 @@ export class Whisper {
       opts.onProgress?.(seek / total, `Распознаю речь… ${fmt(offset)} из ${fmt(total / SAMPLE_RATE)}`);
       const window = audio.subarray(seek, seek + step);
       const winSec = window.length / SAMPLE_RATE;
-      const { seq, avgLogprob, noSpeechProb } = await this.decodeWindow(window, langId, opts.isCancelled);
+      const { seq, probes, avgLogprob, noSpeechProb } = await this.decodeWindow(window, langId, opts.isCancelled);
 
       if (noSpeechProb > 0.6 && avgLogprob < -1) {
         seek += window.length;
         continue;
       }
-      const parsed = this.parse(seq);
+      const parsed = this.parse(seq, probes);
       for (const s of parsed.complete) {
         const text = this.tok.decode(s.tokens).trim();
         if (!text) continue;
-        segments.push({ start: offset + s.start, end: offset + Math.min(s.end, winSec), text });
+        const end = Math.min(s.end, winSec);
+        segments.push({ start: offset + s.start, end: offset + end, text, words: this.wordsOf(s.tokens, s.times, s.start, end, offset) });
       }
       // Незаконченная фраза в конце окна — начнём с неё следующее окно
       if (parsed.openStart !== null && parsed.openStart > 1 && window.length === step) {
@@ -296,7 +359,7 @@ export class Whisper {
       } else {
         if (parsed.openStart !== null && parsed.openTokens.length) {
           const text = this.tok.decode(parsed.openTokens).trim();
-          if (text) segments.push({ start: offset + parsed.openStart, end: offset + winSec, text });
+          if (text) segments.push({ start: offset + parsed.openStart, end: offset + winSec, text, words: this.wordsOf(parsed.openTokens, parsed.openTimes, parsed.openStart, winSec, offset) });
         }
         seek += window.length;
       }
@@ -305,26 +368,55 @@ export class Whisper {
     return { segments: cleanup(segments), language };
   }
 
-  private parse(seq: number[]) {
+  /** Слова фразы: время каждого — метка модели после слова, приведённая в порядок внутри фразы */
+  private wordsOf(tokens: number[], times: number[], start: number, end: number, offset: number): Word[] {
+    // Метки должны идти по возрастанию и не выходить за фразу
+    let prev = start;
+    const t = times.map((v) => {
+      const x = Math.min(end, Math.max(prev, Number.isFinite(v) ? v : prev));
+      prev = x;
+      return x;
+    });
+    let words = this.tok.words(tokens, t, start);
+    // Модель «застряла» (все метки в одной точке) — делим время фразы по длине слов
+    const spread = words.length > 1 ? words[words.length - 1].end - words[0].end : 1;
+    if (words.length > 2 && spread < 0.05 * (words.length - 1)) {
+      const chars = words.reduce((a, w) => a + w.text.length + 1, 0);
+      let acc = start;
+      words = words.map((w) => {
+        const d = ((end - start) * (w.text.length + 1)) / chars;
+        const r = { ...w, start: acc, end: acc + d };
+        acc += d;
+        return r;
+      });
+    }
+    if (words.length) words[words.length - 1].end = Math.max(words[words.length - 1].end, Math.min(end, words[words.length - 1].end + 0.3));
+    return words.map((w) => ({ text: w.text, start: offset + w.start, end: offset + Math.min(end, w.end) }));
+  }
+
+  private parse(seq: number[], probes: number[] = []) {
     const ts = this.tsBegin;
-    const complete: { start: number; end: number; tokens: number[] }[] = [];
+    const complete: { start: number; end: number; tokens: number[]; times: number[] }[] = [];
     let start: number | null = null;
     let text: number[] = [];
-    for (const t of seq) {
+    let times: number[] = [];
+    seq.forEach((t, k) => {
       if (t >= ts) {
         const time = (t - ts) * 0.02;
         if (start === null) start = time;
         else if (text.length) {
-          complete.push({ start, end: time, tokens: text });
+          complete.push({ start, end: time, tokens: text, times });
           start = null;
           text = [];
+          times = [];
         } else start = time;
       } else if (t < this.eot) {
         if (start === null) start = complete.length ? complete[complete.length - 1].end : 0;
         text.push(t);
+        times.push(probes[k] ?? NaN);
       }
-    }
-    return { complete, openStart: text.length ? start : null, openTokens: text };
+    });
+    return { complete, openStart: text.length ? start : null, openTokens: text, openTimes: times };
   }
 }
 
@@ -433,7 +525,8 @@ function cleanup(list: Segment[]): Segment[] {
       continue;
     }
     const start = prev ? Math.max(s.start, prev.end) : s.start;
-    out.push({ start, end: Math.max(start + 0.3, s.end), text: s.text });
+    const words = s.words?.map((w) => ({ ...w, start: Math.max(start, w.start), end: Math.max(start, w.end) }));
+    out.push({ start, end: Math.max(start + 0.3, s.end), text: s.text, words });
   }
   return out;
 }

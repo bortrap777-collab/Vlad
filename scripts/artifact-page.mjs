@@ -26,6 +26,6 @@ const viewerFix = `<style>/* В просмотрщике отступы безо
 
 writeFileSync(
   out,
-  `<title>W Studio</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${head.trim()}\n${viewerFix}\n${body.trim()}\n`,
+  `<title>Ws</title>\n<meta name="claude:viewport-fit-sides" content="cover">\n${head.trim()}\n${viewerFix}\n${body.trim()}\n`,
 );
 console.log('artifact page →', out);

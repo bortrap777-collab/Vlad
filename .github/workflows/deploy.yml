@@ -1,5 +1,5 @@
-# Сборка W Studio и публикация на GitHub Pages при каждом изменении main.
-name: Deploy W Studio
+# Сборка Ws и публикация на GitHub Pages при каждом изменении main.
+name: Deploy Ws
 
 on:
   push:

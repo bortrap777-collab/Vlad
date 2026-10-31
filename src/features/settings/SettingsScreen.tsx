@@ -8,6 +8,7 @@ import { clearAll, notifyProjectsChanged, requestPersistence, storageEstimate } 
 import { formatBytes } from '../../lib/format';
 import { clearErrors, errorReport, readErrors } from '../../app/errors';
 import { opfsSupported } from '../../lib/fileStore';
+import { canPromptInstall, iosNotSafari, isStandalone, onInstallChange, platform, promptInstall } from '../../app/install';
 
 type Quality = 'original' | '1080' | '720';
 const QUALITY: { id: Quality; title: string; sub: string }[] = [
@@ -26,10 +27,20 @@ export function SettingsScreen() {
   const ui = useUi();
   const { pref, resolved, setPref } = useTheme();
   const [quality, setQuality] = usePref<Quality>('ws.exportQuality', 'original');
-  const [sheet, setSheet] = useState<'quality' | 'lang' | 'about' | 'clear' | null>(null);
+  const [sheet, setSheet] = useState<'quality' | 'lang' | 'about' | 'clear' | 'install' | null>(null);
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
   const [persist, setPersist] = useState<boolean | null>(null);
   const [errCount, setErrCount] = useState(() => readErrors().length);
+  const [canInstall, setCanInstall] = useState(canPromptInstall);
+  useEffect(() => onInstallChange(() => setCanInstall(canPromptInstall())), []);
+  const standalone = isStandalone();
+  const os = platform();
+  const install = async () => {
+    if (await promptInstall()) {
+      ui.toast('Ws установлен — значок появится на главном экране', 'ok');
+      setSheet(null);
+    }
+  };
   const diskStore = (() => {
     try {
       return opfsSupported() && localStorage.getItem('ws.opfsOff') !== '1';
@@ -100,6 +111,19 @@ export function SettingsScreen() {
         </div>
 
         <div className="group">
+          <button className="row" onClick={() => setSheet('install')}>
+            <span className="row-icon plain">
+              <Icon name="download" size={20} />
+            </span>
+            <span className="row-body">
+              <span className="row-title">Установить на телефон или ПК</span>
+              <span className="row-sub">{standalone ? 'Ws уже открыт как приложение' : 'Значок на экране, полный экран, работа без интернета'}</span>
+            </span>
+            <Icon name="chevronRight" size={18} className="row-chev" />
+          </button>
+        </div>
+
+        <div className="group">
           <button className="row" onClick={() => setSheet('quality')}>
             <span className="row-icon plain">
               <Icon name="quality" size={20} />
@@ -133,6 +157,50 @@ export function SettingsScreen() {
         </div>
       </div>
 
+      <Sheet open={sheet === 'install'} onClose={() => setSheet(null)} title="Установить Ws">
+        <div className="feature-sheet install-sheet">
+          {standalone ? (
+            <p className="feature-note">Ws уже установлен и открыт как приложение. Обновления приходят сами: когда выйдет новая версия, внизу появится кнопка «Обновить».</p>
+          ) : (
+            <>
+              {canInstall && (
+                <button className="btn btn-primary btn-block" onClick={install}>
+                  <Icon name="download" size={18} /> Установить Ws
+                </button>
+              )}
+              {(os === 'ios' || !canInstall) && (
+                <div className="install-block">
+                  <b>iPhone и iPad</b>
+                  {iosNotSafari() && <p className="feature-note">Откройте эту страницу в Safari — другие браузеры на iPhone не умеют устанавливать приложения.</p>}
+                  <ol>
+                    <li>Откройте Ws в Safari.</li>
+                    <li>Нажмите «Поделиться» (квадрат со стрелкой вверх).</li>
+                    <li>Выберите «На экран „Домой“» и нажмите «Добавить».</li>
+                  </ol>
+                </div>
+              )}
+              {os !== 'ios' && !canInstall && (
+                <div className="install-block">
+                  <b>Android</b>
+                  <ol>
+                    <li>Откройте Ws в Chrome.</li>
+                    <li>Меню ⋮ → «Установить приложение» (или «Добавить на гл. экран»).</li>
+                  </ol>
+                  <b>Компьютер</b>
+                  <ol>
+                    <li>Chrome или Edge: значок установки в адресной строке справа.</li>
+                  </ol>
+                </div>
+              )}
+              <p className="muted small">
+                После установки Ws открывается со значка без адресной строки, на весь экран, и работает без интернета. Проекты хранятся только на этом устройстве; перенести
+                их можно через «Мои проекты» → «Экспорт».
+              </p>
+            </>
+          )}
+        </div>
+      </Sheet>
+
       <Sheet open={sheet === 'quality'} onClose={() => setSheet(null)} title="Качество экспорта">
         <div className="group flush">
           {QUALITY.map((q) => (
@@ -145,7 +213,7 @@ export function SettingsScreen() {
             </button>
           ))}
         </div>
-        <p className="muted small">Настройка запоминается сейчас и применится, когда появится экспорт видео (этап 4).</p>
+        <p className="muted small">Применяется при экспорте видео.</p>
       </Sheet>
 
       <Sheet open={sheet === 'lang'} onClose={() => setSheet(null)} title="Язык">
@@ -157,7 +225,7 @@ export function SettingsScreen() {
         </div>
       </Sheet>
 
-      <Sheet open={sheet === 'about'} onClose={() => setSheet(null)} title="W Studio">
+      <Sheet open={sheet === 'about'} onClose={() => setSheet(null)} title="Ws">
         <div className="feature-sheet">
           <p className="feature-note">
             Версия {APP_VERSION} · этап {APP_STAGE} из 5

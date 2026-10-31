@@ -107,7 +107,7 @@ function runLength(values: number[]): [number, number][] {
 /* ---------------- описания кодеков ---------------- */
 function visualEntry(type: string, w: number, h: number, ...children: Uint8Array[]): Uint8Array {
   const name = new Uint8Array(32);
-  const label = te.encode('W Studio');
+  const label = te.encode('Ws');
   name[0] = label.length;
   name.set(label, 1);
   return box(

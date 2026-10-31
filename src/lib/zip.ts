@@ -142,7 +142,7 @@ export async function readZip(file: Blob): Promise<ZipEntry[]> {
       break;
     }
   }
-  if (eo < 0) throw new ZipError('Это не файл проекта W Studio (не похож на ZIP).');
+  if (eo < 0) throw new ZipError('Это не файл проекта Ws (не похож на ZIP).');
   const ev = new DataView(tail.buffer, tail.byteOffset + eo, 22);
   const count = ev.getUint16(10, true);
   const cdSize = ev.getUint32(12, true);
@@ -163,7 +163,7 @@ export async function readZip(file: Blob): Promise<ZipEntry[]> {
     const localOff = dv.getUint32(p + 42, true);
     const name = td.decode(cd.subarray(p + 46, p + 46 + nameLen));
     p += 46 + nameLen + extraLen + commentLen;
-    if (method !== 0) throw new ZipError('Файл сжат другой программой. Импортируйте файл, созданный в W Studio, без перепаковки.');
+    if (method !== 0) throw new ZipError('Файл сжат другой программой. Импортируйте файл, созданный в Ws, без перепаковки.');
     const lh = await bytesOf(file.slice(localOff, localOff + 30));
     const lv = new DataView(lh.buffer, lh.byteOffset, 30);
     const start = localOff + 30 + lv.getUint16(26, true) + lv.getUint16(28, true);

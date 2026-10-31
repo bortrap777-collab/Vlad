@@ -7,7 +7,14 @@ import { aiAssetsReady, aiManifest, packSize } from '../../ai/assets';
 import { transcribe, type SpeechModel } from '../../ai/providers/speech';
 import { mixAudio } from './export/audioMix';
 import { SUBTITLE_STYLES, segmentsToSubtitles, type SubtitleStyle } from './subtitles';
-import { totalDuration, type Timeline, type VideoText } from './model';
+import { totalDuration, type Timeline, type VideoText, type WordMode } from './model';
+
+const MODES: { id: WordMode; label: string }[] = [
+  { id: 'build', label: 'По словам' },
+  { id: 'single', label: 'Одно слово' },
+  { id: 'karaoke', label: 'Караоке' },
+  { id: 'phrase', label: 'Фразами' },
+];
 
 const LANGS: { id: string; label: string }[] = [
   { id: 'ru', label: 'Русский' },
@@ -32,6 +39,7 @@ export function SubtitlesSheet({
   ratio,
   readSource,
   onDone,
+  onShiftAll,
   onRemoveAll,
 }: {
   open: boolean;
@@ -40,8 +48,10 @@ export function SubtitlesSheet({
   ratio: number;
   readSource: (id: string) => Promise<Blob>;
   onDone: (texts: VideoText[], info: { language: string; seconds: number }) => void;
+  onShiftAll: (seconds: number) => void;
   onRemoveAll: () => void;
 }) {
+  const [mode, setMode] = usePref<WordMode>('ws.subMode', 'build');
   const [lang, setLang] = usePref<string>('ws.subLang', 'ru');
   const [model, setModel] = usePref<SpeechModel>('ws.subModel', 'speech');
   const [style, setStyle] = usePref<SubtitleStyle>('ws.subStyle', 'classic');
@@ -88,7 +98,7 @@ export function SubtitlesSheet({
         onProgress: (p) => setProgress({ value: 0.05 + (p.value ?? 0) * 0.95, label: p.label }),
       });
       if (!r.segments.length) throw new Error('Речь не найдена. Возможно, в видео только музыка или звук слишком тихий.');
-      const texts = segmentsToSubtitles(r.segments, { ratio, style, total });
+      const texts = segmentsToSubtitles(r.segments, { ratio, style, total, mode });
       onDone(texts, { language: r.language, seconds: (performance.now() - t0) / 1000 });
       setPhase('setup');
     } catch (e) {
@@ -119,7 +129,7 @@ export function SubtitlesSheet({
     <Sheet open={open} onClose={close} title="Субтитры">
       {phase === 'setup' && (
         <div className="feature-sheet">
-          <p className="feature-note">Распознаём речь в видео прямо на телефоне и расставляем текст по времени. Музыка не мешает — она не учитывается.</p>
+          <p className="feature-note">Распознаём речь в видео прямо на телефоне и ставим каждое слово в момент, когда его произносят. Музыка не мешает — она не учитывается.</p>
           <div className="field" style={{ width: '100%' }}>
             <span className="field-label">Язык речи</span>
             <div className="segmented">
@@ -154,6 +164,39 @@ export function SubtitlesSheet({
               ))}
             </div>
           </div>
+          <div className="field" style={{ width: '100%' }}>
+            <span className="field-label">Как появляются слова</span>
+            <div className="segmented seg-wrap">
+              {MODES.map((m) => (
+                <button key={m.id} className={mode === m.id ? 'is-active' : ''} onClick={() => setMode(m.id)}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <span className="muted small">
+              {mode === 'build'
+                ? 'Каждое слово появляется в момент, когда его произносят; фраза исчезает, как только начинается следующая.'
+                : mode === 'single'
+                  ? 'На экране только звучащее слово — крупно, как в Reels и TikTok.'
+                  : mode === 'karaoke'
+                    ? 'Фраза целиком, произносимое слово подсвечено.'
+                    : 'Фраза появляется целиком на время звучания.'}
+            </span>
+          </div>
+          {existing > 0 && (
+            <div className="field" style={{ width: '100%' }}>
+              <span className="field-label">Сдвинуть все субтитры</span>
+              <div className="chip-row">
+                {[-0.5, -0.1, 0.1, 0.5].map((d) => (
+                  <button key={d} className="pill pill-sm" onClick={() => onShiftAll(d)}>
+                    {d > 0 ? '+' : '−'}
+                    {String(Math.abs(d)).replace('.', ',')} с
+                  </button>
+                ))}
+              </div>
+              <span className="muted small">Если весь текст чуть раньше или позже речи. Отдельную карточку можно копировать, двигать и растягивать на шкале.</span>
+            </div>
+          )}
           {existing > 0 && <p className="muted small">Сейчас в ролике {existing} субтитров — новые заменят их. Обычные надписи останутся.</p>}
           <button className="btn btn-primary btn-block" onClick={start} disabled={total <= 0}>
             <Icon name="captions" size={18} /> {existing ? 'Создать заново' : 'Создать субтитры'}

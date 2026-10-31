@@ -2,17 +2,21 @@
  * Экспорт монтажа в видеофайл на устройстве, без сервера.
  *
  *  1. Звук: сведение (OfflineAudioContext) → AudioEncoder (AAC, иначе Opus, иначе PCM в MOV).
- *  2. Видео: для каждого кадра 30 fps — перемотка нужного исходника на точное время,
- *     отрисовка в canvas (вписывание + титры) → VideoEncoder (H.264, иначе VP9).
+ *  2. Видео: для каждого кадра (60 или 30 к/с) — перемотка нужного исходника на точное время,
+ *     отрисовка в canvas (вписывание, переходы и наложения на WebGL, анимированный текст) → VideoEncoder.
  *  3. Сборка файла своим MP4/MOV-сборщиком (mp4.ts).
  *
  * Перемотка по кадрам медленнее простого проигрывания, зато кадры точные,
  * не зависят от нагрузки и экспорт продолжается, если экран на секунду погас.
  */
-import { drawTexts, ensureFonts } from '../../photo/render';
+import { ensureFonts } from '../../photo/render';
 import { applyAdjustments, pixelParams } from '../../photo/pipeline';
-import { clipStarts, dipAt, frameRatio, hasLook, locate, lookEdits, totalDuration, transitionAt, type Timeline } from '../model';
+import { loadImage } from '../../../lib/media';
+import { probeFps } from '../../../lib/mp4probe';
+import { clipLanes, clipStarts, dipAt, frameRatio, hasLook, isBlend, laneKey, locate, lookEdits, rateAt, srcAt, totalDuration, transitionAt, type Timeline } from '../model';
 import { BlurHelper, drawClipFrame, drawDip, drawTransition } from '../compose';
+import { FULL, GLRenderer } from '../gl';
+import { drawVideoText } from '../textFx';
 import type { LoadedSource } from '../useVideoProject';
 import { MIX_RATE, mixAudio } from './audioMix';
 import { muxMp4, type AudioTrack, type VideoSample } from './mp4';
@@ -41,7 +45,6 @@ export interface ExportResult {
 
 export class ExportError extends Error {}
 
-const FPS = 30;
 const TIMESCALE = 90000;
 
 export function webCodecsAvailable(): boolean {
@@ -107,7 +110,7 @@ async function supportedAudio(): Promise<AudioCodecChoice> {
 }
 
 export function hasAudio(t: Timeline): boolean {
-  return t.clips.some((c) => c.volume > 0) || !!(t.music && t.music.volume > 0);
+  return t.clips.some((c) => c.volume > 0) || t.audios.some((a) => a.volume > 0) || t.overlays.some((o) => o.volume > 0);
 }
 
 export async function planExport(timeline: Timeline, sources: Record<string, LoadedSource>, quality: ExportQuality): Promise<ExportPlan> {
@@ -120,6 +123,7 @@ export async function planExport(timeline: Timeline, sources: Record<string, Loa
   const sh = first?.height || 720;
   const ratio = frameRatio(timeline, sw, sh);
   const notes: string[] = [];
+  const FPS = timeline.fps ?? 60;
   let [w, h] = targetSize(sw, sh, quality, ratio);
   let codec = await supportedVideo(w, h, FPS);
   if (!codec && Math.min(w, h) > 1080) {
@@ -261,20 +265,25 @@ export async function exportVideo(
 
   let wake: { release: () => Promise<void> } | null = null;
   try {
-    wake = await (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen') ?? null;
+    wake = (await (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen')) ?? null;
   } catch {
     /* экран может погаснуть — экспорт продолжится после включения */
   }
 
-  // Скрытые видео только для экспорта: плеер на экране не трогаем
+  // Скрытые видео только для экспорта: плеер на экране не трогаем.
+  // Соседние клипы из одного файла — на разных элементах (переход: оба кадра живые без перемотки туда-сюда).
   const host = document.createElement('div');
   host.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;z-index:-1';
   document.body.appendChild(host);
   const els = new Map<string, HTMLVideoElement>();
-  const used = [...new Set(timeline.clips.map((c) => c.src))];
+  const lanes = clipLanes(timeline);
+  const keys = new Map<string, string>();
+  timeline.clips.forEach((c, i) => keys.set(laneKey(c.src, lanes[i]), c.src));
+  timeline.overlays.forEach((o) => sources[o.src]?.kind === 'video' && keys.set('ov:' + o.id, o.src));
+  const images = new Map<string, HTMLImageElement>();
 
   try {
-    for (const id of used) {
+    for (const [key, id] of keys) {
       const src = sources[id];
       if (!src) throw new ExportError('Исходный файл клипа не найден.');
       const v = document.createElement('video');
@@ -284,9 +293,13 @@ export async function exportVideo(
       v.preload = 'auto';
       v.src = src.url;
       host.appendChild(v);
-      els.set(id, v);
+      els.set(key, v);
       // iOS отдаёт кадры в canvas только после первого запуска
       v.play().then(() => v.pause()).catch(() => undefined);
+    }
+    for (const o of timeline.overlays) {
+      const s = sources[o.src];
+      if (s?.kind === 'image' && !images.has(o.src)) images.set(o.src, await loadImage(s.url));
     }
 
     /* ---- 1. Звук ---- */
@@ -295,7 +308,7 @@ export async function exportVideo(
       onProgress(0.01, 'Свожу звук…');
       const mix = await mixAudio(timeline, readSource, signal, (v) => onProgress(0.01 + v * 0.05, 'Свожу звук…'));
       if (mix.failed.length) {
-        const names = mix.failed.map((id) => sources[id]?.name ?? 'файл').join(', ');
+        const names = [...new Set(mix.failed)].map((id) => sources[id]?.name ?? 'файл').join(', ');
         warnings.push(`Без звука: ${names} (в файле нет звуковой дорожки или формат не поддерживается).`);
       }
       if (mix.buffer) {
@@ -310,6 +323,17 @@ export async function exportVideo(
     const texts = timeline.texts;
     await ensureFonts(texts);
 
+    // Частота кадров исходников «плавных» клипов — для смешивания соседних кадров
+    const srcFps = new Map<string, number>();
+    for (const c of timeline.clips) {
+      if (!c.smooth || srcFps.has(c.src)) continue;
+      try {
+        srcFps.set(c.src, (await probeFps(await readSource(c.src))) ?? 30);
+      } catch {
+        srcFps.set(c.src, 30);
+      }
+    }
+
     const W = plan.width;
     const H = plan.height;
     const canvas = document.createElement('canvas');
@@ -318,6 +342,12 @@ export async function exportVideo(
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) throw new ExportError('Браузер не дал холст для отрисовки.');
     ctx.imageSmoothingQuality = 'high';
+    // Переходы и наложения — на видеокарте, тем же кодом, что в предпросмотре
+    const glCanvas = document.createElement('canvas');
+    glCanvas.width = W;
+    glCanvas.height = H;
+    const gl = GLRenderer.create(glCanvas, { preserve: true });
+    if (!gl && (timeline.overlays.some((o) => o.key) || timeline.clips.some((c) => isBlend(c)))) warnings.push('WebGL недоступен: переходы заменены растворением, хромакей не применён.');
 
     const starts = clipStarts(timeline);
     let missed = 0;
@@ -333,15 +363,12 @@ export async function exportVideo(
       x.imageSmoothingQuality = 'high';
       return { c, x };
     };
-    const live = makeLayer();
-    /** Неподвижные кадры для переходов: последний кадр уходящего клипа, первый — входящего */
-    const frozen = new Map<string, HTMLCanvasElement>();
-
-    /** Кадр клипа i в момент исходника `local` → в ctx (фон, вписывание, фильтр клипа) */
-    const renderClip = async (target: CanvasRenderingContext2D, i: number, local: number) => {
+    const layerA = makeLayer();
+    const layerB = makeLayer();
+    const blendA = makeLayer();
+    /** Кадр исходника → холст (фон, вписывание, фильтр клипа) */
+    const drawSource = (target: CanvasRenderingContext2D, i: number, v: HTMLVideoElement) => {
       const c = timeline.clips[i];
-      const v = els.get(c.src)!;
-      if (!(await waitSeek(v, local))) missed++;
       let r: { x: number; y: number; w: number; h: number };
       try {
         r = drawClipFrame(target, v, W, H, layout);
@@ -362,24 +389,34 @@ export async function exportVideo(
         }
       }
     };
-    const localAt = (i: number, T: number) => {
+    const elOf = (i: number) => els.get(laneKey(timeline.clips[i].src, lanes[i]))!;
+    const clampLocal = (v: HTMLVideoElement, t: number) => Math.min(Math.max(0, t), Math.max(0, (v.duration || t) - 0.5 / plan.fps));
+
+    /** Кадр клипа i в момент шкалы T (с плавным замедлением — смесь двух соседних кадров исходника) */
+    const renderClip = async (target: CanvasRenderingContext2D, i: number, T: number) => {
       const c = timeline.clips[i];
-      const v = els.get(c.src)!;
-      return Math.min(c.in + Math.max(0, T - starts[i]) * (c.speed || 1), Math.max(c.in, Math.min(c.out, v.duration || c.out) - 0.5 / plan.fps));
-    };
-    const frozenFrame = async (i: number, which: 'first' | 'last') => {
-      const key = `${i}:${which}`;
-      let cv = frozen.get(key);
-      if (!cv) {
-        const c = timeline.clips[i];
-        const v = els.get(c.src)!;
-        const t = which === 'first' ? c.in : Math.max(c.in, Math.min(c.out, v.duration || c.out) - 0.5 / plan.fps);
-        const layer = makeLayer();
-        await renderClip(layer.x, i, t);
-        cv = layer.c;
-        frozen.set(key, cv);
+      const v = elOf(i);
+      const tau = T - starts[i];
+      const local = clampLocal(v, srcAt(c, tau));
+      const f = srcFps.get(c.src);
+      if (f && rateAt(c, tau) < 0.97) {
+        const pos = local * f - 0.5;
+        const k = Math.max(0, Math.floor(pos));
+        const w = Math.min(1, Math.max(0, pos - k));
+        if (!(await waitSeek(v, clampLocal(v, (k + 0.5) / f)))) missed++;
+        drawSource(target, i, v);
+        if (w > 0.02) {
+          if (!(await waitSeek(v, clampLocal(v, (k + 1.5) / f)))) missed++;
+          drawSource(blendA.x, i, v);
+          target.save();
+          target.globalAlpha = w;
+          target.drawImage(blendA.c, 0, 0);
+          target.restore();
+        }
+        return;
       }
-      return cv;
+      if (!(await waitSeek(v, local))) missed++;
+      drawSource(target, i, v);
     };
 
     const samples: VideoSample[] = [];
@@ -422,22 +459,73 @@ export async function exportVideo(
       const loc = locate(timeline, T);
       const tr = transitionAt(timeline, T);
       if (loc && tr) {
-        // Переход: живой кадр текущего клипа + неподвижный кадр соседнего
-        await renderClip(live.x, loc.index, localAt(loc.index, T));
-        const incoming = loc.index === tr.index;
-        const still = incoming ? await frozenFrame(tr.index - 1, 'last') : await frozenFrame(tr.index, 'first');
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, W, H);
-        drawTransition(ctx, tr.type, tr.p, incoming ? still : live.c, incoming ? live.c : still, W, H);
+        // Переход: оба клипа живые — уходящий идёт дальше своего конца, входящий начинается раньше
+        await renderClip(layerA.x, tr.index - 1, T);
+        await renderClip(layerB.x, tr.index, T);
+        let done = false;
+        if (gl) {
+          gl.upload(0, layerA.c);
+          gl.upload(1, layerB.c);
+          gl.clear();
+          done = gl.drawTransition(tr.type, tr.p, FULL, FULL, tr.index * 3.7);
+          if (done) ctx.drawImage(glCanvas, 0, 0);
+        }
+        if (!done) {
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, W, H);
+          drawTransition(ctx, tr.type, tr.p, layerA.c, layerB.c, W, H);
+        }
       } else if (loc) {
-        await renderClip(ctx, loc.index, localAt(loc.index, T));
-        if (frozen.size) frozen.clear();
+        await renderClip(ctx, loc.index, T);
       } else {
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, W, H);
       }
-      const active = texts.filter((t) => T >= t.start && T < t.end);
-      if (active.length) drawTexts(ctx, active, W, H);
+
+      // Наложения
+      const ov = timeline.overlays.filter((o) => T >= o.start && T < o.end);
+      if (ov.length) {
+        if (gl) gl.clear();
+        for (const o of ov) {
+          const s = sources[o.src];
+          let img: CanvasImageSource | null = null;
+          let iw = 0;
+          let ih = 0;
+          if (s?.kind === 'image') {
+            const im = images.get(o.src);
+            if (im) {
+              img = im;
+              iw = im.naturalWidth;
+              ih = im.naturalHeight;
+            }
+          } else {
+            const v = els.get('ov:' + o.id);
+            if (v) {
+              if (!(await waitSeek(v, clampLocal(v, o.in + (T - o.start))))) missed++;
+              img = v;
+              iw = v.videoWidth;
+              ih = v.videoHeight;
+            }
+          }
+          if (!img || !iw || !ih) continue;
+          const w = o.w * W;
+          const h = (w * ih) / iw;
+          if (gl) {
+            gl.upload(2, img as TexImageSource);
+            gl.drawOverlay(o.x * W, o.y * H, w, h, o.rotation, o.opacity, o.key);
+          } else {
+            ctx.save();
+            ctx.globalAlpha = o.opacity;
+            ctx.translate(o.x * W, o.y * H);
+            ctx.rotate((o.rotation * Math.PI) / 180);
+            ctx.drawImage(img, -w / 2, -h / 2, w, h);
+            ctx.restore();
+          }
+        }
+        if (gl) ctx.drawImage(glCanvas, 0, 0);
+      }
+
+      for (const t of texts) if (T >= t.start && T < t.end) drawVideoText(ctx, t, T, W, H);
       const dip = dipAt(timeline, T);
       drawDip(ctx, dip.color, dip.alpha, W, H);
 

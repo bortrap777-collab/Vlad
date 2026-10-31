@@ -16,8 +16,24 @@ export interface CropRect {
   h: number;
 }
 
-export type TextFont = 'accent' | 'elegant' | 'hand';
-export type TextStyle = 'plain' | 'shadow' | 'box';
+export type TextFont =
+  | 'accent'
+  | 'elegant'
+  | 'hand'
+  | 'heavy'
+  | 'rubik'
+  | 'wide'
+  | 'narrow'
+  | 'sport'
+  | 'round'
+  | 'serif'
+  | 'lobster'
+  | 'pacifico'
+  | 'script'
+  | 'marker'
+  | 'block'
+  | 'pixel';
+export type TextStyle = 'plain' | 'shadow' | 'box' | 'outline' | 'neon';
 
 export interface TextLayer {
   id: string;
@@ -32,6 +48,8 @@ export interface TextLayer {
   color: string;
   font: TextFont;
   style: TextStyle;
+  /** Непрозрачность 0…1 (нет — 1) */
+  opacity?: number;
 }
 
 /** Замена фона в версии 0.5.0 — теперь это слои; поле читается только для переноса старых проектов. */
@@ -150,13 +168,27 @@ export const DEFAULT_EDITS: PhotoEdits = {
   stack: null,
 };
 
+/** Шрифты Google Fonts с кириллицей (подключены в index.html, офлайн — из кэша service worker) */
 export const TEXT_FONTS: Record<TextFont, { name: string; family: string; weight: number }> = {
   accent: { name: 'Акцент', family: "'Manrope', -apple-system, 'Helvetica Neue', Arial, sans-serif", weight: 800 },
+  heavy: { name: 'Жирный', family: "'Montserrat', 'Arial Black', sans-serif", weight: 900 },
+  rubik: { name: 'Рубик', family: "'Rubik', 'Arial Black', sans-serif", weight: 900 },
+  wide: { name: 'Широкий', family: "'Unbounded', 'Arial Black', sans-serif", weight: 800 },
+  narrow: { name: 'Узкий', family: "'Oswald', 'Arial Narrow', sans-serif", weight: 700 },
+  sport: { name: 'Спорт', family: "'Russo One', 'Arial Black', sans-serif", weight: 400 },
+  round: { name: 'Мягкий', family: "'Comfortaa', 'Arial Rounded MT Bold', sans-serif", weight: 700 },
+  block: { name: 'Блок', family: "'Rubik Mono One', 'Arial Black', sans-serif", weight: 400 },
   elegant: { name: 'Элегант', family: "'Playfair Display', Georgia, 'Times New Roman', serif", weight: 700 },
+  serif: { name: 'Классика', family: "'PT Serif', Georgia, 'Times New Roman', serif", weight: 700 },
+  lobster: { name: 'Лобстер', family: "'Lobster', 'Brush Script MT', cursive", weight: 400 },
+  pacifico: { name: 'Пасифико', family: "'Pacifico', 'Brush Script MT', cursive", weight: 400 },
   hand: { name: 'Рукопись', family: "'Caveat', 'Segoe Print', 'Bradley Hand', cursive", weight: 700 },
+  script: { name: 'Письмо', family: "'Marck Script', 'Segoe Script', cursive", weight: 400 },
+  marker: { name: 'Маркер', family: "'Amatic SC', 'Segoe Print', cursive", weight: 700 },
+  pixel: { name: 'Пиксель', family: "'Press Start 2P', 'Courier New', monospace", weight: 400 },
 };
 
-export const TEXT_COLORS = ['#FFFFFF', '#111111', '#8366FF', '#FFD84D', '#FF6FA3', '#4C9BFF'];
+export const TEXT_COLORS = ['#FFFFFF', '#111111', '#8366FF', '#FFD84D', '#FF6FA3', '#4C9BFF', '#2FCB8A', '#FF3B30', '#FF8A3D', '#B4FF39', '#00E5FF', '#C77DFF', '#F5E6C8', '#8E8E93'];
 
 export function presetOf(id: PresetId): Preset {
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];

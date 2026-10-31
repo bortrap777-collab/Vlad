@@ -1,32 +1,8 @@
 import { useState } from 'react';
 import { Sheet } from '../../components/ui';
 import { Icon } from '../../components/Icon';
-import { formatTime } from '../../lib/format';
 import { PRESETS, PRESET_GROUPS, temperatureLayer, toCssFilter, DEFAULT_EDITS } from '../photo/pipeline';
-import { FORMATS, SPEEDS, TRANSITIONS, lookEdits, type ClipLook, type Timeline, type TransitionType } from './model';
-
-/* ---------------- Скорость ---------------- */
-export function SpeedSheet({ open, value, onChange, onClose }: { open: boolean; value: number; onChange: (v: number) => void; onClose: () => void }) {
-  return (
-    <Sheet open={open} onClose={onClose} title="Скорость клипа">
-      <div className="feature-sheet">
-        <div className="chip-row speed-row" role="radiogroup" aria-label="Скорость">
-          {SPEEDS.map((s) => (
-            <button key={s} role="radio" aria-checked={value === s} className={`pill ${value === s ? 'is-active' : ''}`} onClick={() => onChange(s)}>
-              {String(s).replace('.', ',')}×
-            </button>
-          ))}
-        </div>
-        <p className="muted small">
-          {value < 1 ? 'Замедление' : value > 1 ? 'Ускорение' : 'Обычная скорость'}. Звук меняется вместе с видео, как на плёнке. Чтобы убрать звук клипа, откройте «Звук» → «Без звука».
-        </p>
-        <button className="btn btn-primary btn-block" onClick={onClose}>
-          Готово
-        </button>
-      </div>
-    </Sheet>
-  );
-}
+import { FORMATS, TRANSITIONS, lookEdits, type ClipLook, type Timeline, type TransitionType } from './model';
 
 /* ---------------- Фильтр и цвет клипа ---------------- */
 const ADJ: { key: 'brightness' | 'contrast' | 'saturation' | 'temperature'; label: string }[] = [
@@ -183,6 +159,18 @@ export function FormatSheet({ open, timeline, onChange, onClose }: { open: boole
             <input id="fade-out" type="checkbox" className="switch" checked={!!timeline.fadeOut} onChange={(e) => onChange({ fadeOut: e.target.checked })} />
           </label>
         </div>
+        <div className="field" style={{ width: '100%' }}>
+          <span className="field-label">Частота кадров видео</span>
+          <div className="segmented segmented-2">
+            <button className={(timeline.fps ?? 60) === 60 ? 'is-active' : ''} onClick={() => onChange({ fps: 60 })}>
+              60 к/с — плавно
+            </button>
+            <button className={timeline.fps === 30 ? 'is-active' : ''} onClick={() => onChange({ fps: 30 })}>
+              30 к/с — быстрее
+            </button>
+          </div>
+          <p className="muted small">60 кадров в секунду — самое плавное движение, переходы и замедление. Экспорт идёт примерно вдвое дольше.</p>
+        </div>
         <p className="muted small">Переход между клипами — кнопка ＋ на стыке клипов на шкале.</p>
         <button className="btn btn-primary btn-block" onClick={onClose}>
           Готово
@@ -192,53 +180,12 @@ export function FormatSheet({ open, timeline, onChange, onClose }: { open: boole
   );
 }
 
-/* ---------------- Музыка ---------------- */
-export function MusicSettings({
-  timeline,
-  trackDuration,
-  onChange,
-}: {
-  timeline: Timeline;
-  trackDuration: number;
-  onChange: (p: Partial<NonNullable<Timeline['music']>>) => void;
-}) {
-  const m = timeline.music;
-  if (!m) return null;
-  const maxOff = Math.max(0, Math.floor(trackDuration - 1));
-  const off = Math.min(m.offset ?? 0, maxOff);
-  return (
-    <>
-      {maxOff > 0 && (
-        <div className="field" style={{ width: '100%' }}>
-          <label className="field-label" htmlFor="music-offset">
-            Начать трек с {formatTime(off)}
-          </label>
-          <input id="music-offset" className="slider" type="range" min={0} max={maxOff} step={1} value={off} onChange={(e) => onChange({ offset: Number(e.target.value) })} />
-        </div>
-      )}
-      <div className="group flush" style={{ width: '100%' }}>
-        <label className="row switch-row" htmlFor="music-fade-in">
-          <span className="row-body">
-            <span className="row-title">Плавное появление</span>
-          </span>
-          <input id="music-fade-in" type="checkbox" className="switch" checked={!!m.fadeIn} onChange={(e) => onChange({ fadeIn: e.target.checked })} />
-        </label>
-        <label className="row switch-row" htmlFor="music-fade-out">
-          <span className="row-body">
-            <span className="row-title">Плавное затухание</span>
-          </span>
-          <input id="music-fade-out" type="checkbox" className="switch" checked={!!m.fadeOut} onChange={(e) => onChange({ fadeOut: e.target.checked })} />
-        </label>
-      </div>
-    </>
-  );
-}
-
 /* ---------------- Переход между клипами ---------------- */
 const DURATIONS: { v: number; label: string }[] = [
-  { v: 0.4, label: 'Быстро' },
-  { v: 0.6, label: 'Обычно' },
-  { v: 1, label: 'Плавно' },
+  { v: 0.3, label: 'Резко' },
+  { v: 0.5, label: 'Быстро' },
+  { v: 0.8, label: 'Обычно' },
+  { v: 1.2, label: 'Плавно' },
 ];
 
 export function TransitionSheet({
@@ -247,6 +194,7 @@ export function TransitionSheet({
   duration,
   onChange,
   onApplyAll,
+  onPreview,
   onClose,
 }: {
   open: boolean;
@@ -254,13 +202,23 @@ export function TransitionSheet({
   duration: number;
   onChange: (p: { transition?: TransitionType; transitionDuration?: number }) => void;
   onApplyAll: () => void;
+  onPreview: () => void;
   onClose: () => void;
 }) {
+  const [group, setGroup] = useState<'trend' | 'classic'>(TRANSITIONS.find((t) => t.id === value)?.group ?? 'trend');
   return (
     <Sheet open={open} onClose={onClose} title="Переход">
       <div className="feature-sheet">
+        <div className="segmented segmented-2" role="tablist">
+          <button className={group === 'trend' ? 'is-active' : ''} onClick={() => setGroup('trend')}>
+            Динамичные
+          </button>
+          <button className={group === 'classic' ? 'is-active' : ''} onClick={() => setGroup('classic')}>
+            Классика
+          </button>
+        </div>
         <div className="trans-grid" role="radiogroup" aria-label="Переход">
-          {TRANSITIONS.map((t) => (
+          {TRANSITIONS.filter((t) => t.group === group || t.id === 'none').map((t) => (
             <button key={t.id} role="radio" aria-checked={value === t.id} className={`trans-tile ${value === t.id ? 'is-active' : ''}`} onClick={() => onChange({ transition: t.id })}>
               <span className={`trans-demo trans-demo-${t.id}`} aria-hidden="true">
                 <i className="a" />
@@ -276,13 +234,16 @@ export function TransitionSheet({
             <div className="segmented">
               {DURATIONS.map((d) => (
                 <button key={d.v} className={Math.abs(duration - d.v) < 0.01 ? 'is-active' : ''} onClick={() => onChange({ transitionDuration: d.v })}>
-                  {d.label} · {String(d.v).replace('.', ',')} с
+                  {d.label}
                 </button>
               ))}
             </div>
           </div>
         )}
-        <p className="muted small">Длина ролика не меняется: на стыке клипы на мгновение задерживают крайние кадры.</p>
+        <button className="btn btn-soft btn-block" onClick={onPreview}>
+          <Icon name="play" size={16} fill /> Посмотреть переход
+        </button>
+        <p className="muted small">Длина ролика не меняется: на стыке оба клипа живые — уходящий продолжает движение, входящий начинается чуть раньше.</p>
         <div className="btn-pair">
           <button className="btn btn-soft" onClick={onApplyAll}>
             На все стыки

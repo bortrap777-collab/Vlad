@@ -3,6 +3,7 @@
  * Тяжёлая попиксельная часть выполняется в Web Worker, интерфейс не зависает,
  * прогресс передаётся наружу.
  */
+import { drawVideoText } from '../video/textFx';
 import { loadImage, MediaError } from '../../lib/media';
 import { applyAdjustments, blurredBackdrop, isNeutralAdjust, pixelParams, TEXT_FONTS, type PhotoEdits, type PixelParams, type TextLayer } from './pipeline';
 import { layerBox, type LayerStack, type PhotoLayer } from './layers';
@@ -64,68 +65,19 @@ export function canvasPixelLimit(): number {
 export async function ensureFonts(texts: TextLayer[]): Promise<void> {
   if (!texts.length || !document.fonts?.load) return;
   const used = new Set(texts.map((t) => t.font));
+  // Образец текста нужен, чтобы загрузилась и кириллическая часть шрифта (unicode-range)
+  const sample = [...new Set(texts.map((t) => t.text).join('').replace(/\s/g, ''))].join('').slice(0, 200) || 'AaЯя';
   await Promise.all(
     [...used].map((f) => {
-      const def = TEXT_FONTS[f];
-      return document.fonts.load(`${def.weight} 48px ${def.family}`).catch(() => undefined);
+      const def = TEXT_FONTS[f] ?? TEXT_FONTS.accent;
+      return document.fonts.load(`${def.weight} 48px ${def.family}`, sample).catch(() => undefined);
     }),
   );
 }
 
 export function drawTexts(ctx: CanvasRenderingContext2D, texts: TextLayer[], w: number, h: number): void {
-  for (const t of texts) {
-    if (!t.text.trim()) continue;
-    const def = TEXT_FONTS[t.font];
-    const fs = t.size * w;
-    const lh = fs * 1.2;
-    const lines = t.text.split('\n');
-    ctx.save();
-    ctx.font = `${def.weight} ${fs}px ${def.family}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    // Поворот вокруг центра надписи — как в предпросмотре
-    ctx.translate(t.x * w, t.y * h);
-    if (t.rotation) ctx.rotate((t.rotation * Math.PI) / 180);
-    const cx = 0;
-    const cy = 0;
-    const blockH = lines.length * lh;
-    if (t.style === 'box') {
-      const maxW = Math.max(...lines.map((l) => ctx.measureText(l).width));
-      const padX = fs * 0.5;
-      const padY = fs * 0.25;
-      const bw = maxW + padX * 2;
-      const bh = blockH + padY * 2;
-      roundRect(ctx, cx - bw / 2, cy - bh / 2, bw, bh, fs * 0.3);
-      ctx.fillStyle = t.color;
-      ctx.fill();
-    }
-    if (t.style === 'shadow') {
-      ctx.shadowColor = 'rgba(0,0,0,0.55)';
-      ctx.shadowBlur = fs * 0.25;
-      ctx.shadowOffsetY = fs * 0.05;
-    }
-    ctx.fillStyle = t.style === 'box' ? boxInk(t.color) : t.color;
-    lines.forEach((line, i) => ctx.fillText(line, cx, cy - blockH / 2 + lh * (i + 0.5)));
-    ctx.restore();
-  }
-}
-
-/** Цвет текста на плашке: тёмный на светлой, белый на тёмной. */
-export function boxInk(bg: string): string {
-  const r = parseInt(bg.slice(1, 3), 16);
-  const g = parseInt(bg.slice(3, 5), 16);
-  const b = parseInt(bg.slice(5, 7), 16);
-  return 0.299 * r + 0.587 * g + 0.114 * b > 160 ? '#111111' : '#FFFFFF';
-}
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  // Те же стили, что у надписей видео (тень, плашка, контур, неон, прозрачность)
+  for (const t of texts) drawVideoText(ctx, { ...t, start: 0, end: 1 }, 0.5, w, h);
 }
 
 function isNeutral(p: PixelParams): boolean {

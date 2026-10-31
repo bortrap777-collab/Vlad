@@ -1,8 +1,8 @@
 {
   "name": "w-studio",
   "private": true,
-  "version": "0.8.0",
-  "description": "W Studio — мобильный редактор фото и видео (PWA)",
+  "version": "0.9.0",
+  "description": "Ws — мобильный редактор фото и видео (PWA)",
   "type": "module",
   "scripts": {
     "dev": "node scripts/prepare-ai.mjs && vite --host",

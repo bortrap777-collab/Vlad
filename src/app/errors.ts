@@ -46,7 +46,7 @@ export function clearErrors(): void {
 
 /** Текст отчёта: версия, устройство, последние ошибки */
 export function errorReport(list = readErrors()): string {
-  const lines = [`W Studio ${APP_VERSION}`, navigator.userAgent, ''];
+  const lines = [`Ws ${APP_VERSION}`, navigator.userAgent, ''];
   for (const r of list) {
     lines.push(`${new Date(r.at).toLocaleString('ru-RU')} · ${r.where}`, r.message);
     if (r.stack) lines.push(r.stack);

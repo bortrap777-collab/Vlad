@@ -1,6 +1,6 @@
 {
-  "name": "W Studio",
-  "short_name": "W Studio",
+  "name": "Ws",
+  "short_name": "Ws",
   "description": "Редактор фото и видео",
   "lang": "ru",
   "start_url": "./",

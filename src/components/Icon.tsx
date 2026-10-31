@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 
-/** Набор линейных иконок W Studio (24×24, обводка currentColor). */
+/** Набор линейных иконок Ws (24×24, обводка currentColor). */
 const P: Record<string, string> = {
   video: 'M3 7.5A2.5 2.5 0 0 1 5.5 5h8A2.5 2.5 0 0 1 16 7.5v9a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 3 16.5zM16 10l5-3v10l-5-3',
   photo: 'M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM4 16l4.5-4.5 4 4 2.5-2.5L20 18M15.5 9.5h.01',
@@ -91,8 +91,9 @@ export function Icon({ name, size = 24, stroke = 1.9, fill = false, className, s
 
 /** Логотип W с фирменным градиентом. */
 export function LogoMark({ size = 34 }: { size?: number }) {
+  // «W» и маленькая «s» — знак Ws
   return (
-    <svg width={size} height={size * 0.75} viewBox="80 140 410 260" aria-hidden="true">
+    <svg width={size * 1.25} height={size * 0.75} viewBox="80 140 520 260" aria-hidden="true">
       <defs>
         <linearGradient id="ws-logo-g" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="var(--logo-a)" />
@@ -100,6 +101,15 @@ export function LogoMark({ size = 34 }: { size?: number }) {
         </linearGradient>
       </defs>
       <path d="M96 150h70l46 170 44-150h56l44 150 46-170h70l-84 236h-62l-42-140-42 140h-62z" fill="url(#ws-logo-g)" />
+      <path
+        d="M436 300c-8-14-24-20-40-20-20 0-34 10-34 24 0 30 76 16 76 48 0 16-16 28-40 28-18 0-34-8-42-22"
+        transform="translate(140 10)"
+        fill="none"
+        stroke="var(--logo-b)"
+        strokeWidth={28}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

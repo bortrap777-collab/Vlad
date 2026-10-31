@@ -138,7 +138,7 @@ function openDB(): Promise<IDBDatabase> {
       resolve(db);
     };
     req.onerror = () => reject(new StorageError(explain(req.error), req.error));
-    req.onblocked = () => reject(new StorageError('Хранилище занято другой вкладкой W Studio. Закройте её и повторите.'));
+    req.onblocked = () => reject(new StorageError('Хранилище занято другой вкладкой Ws. Закройте её и повторите.'));
   }).catch((e) => {
     dbPromise = null;
     throw e;

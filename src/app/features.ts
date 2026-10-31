@@ -48,5 +48,5 @@ export const FEATURES = {
 
 export type FeatureId = keyof typeof FEATURES;
 
-export const APP_VERSION = '0.8.0';
+export const APP_VERSION = '0.9.0';
 export const APP_STAGE = 5;

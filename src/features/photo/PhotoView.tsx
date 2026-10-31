@@ -1,6 +1,6 @@
-import { useEffect, useRef, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useRef, type CSSProperties, type PointerEvent as RPointerEvent, type ReactNode } from 'react';
 import { useElementSize } from '../../lib/useElementSize';
-import { boxInk } from './render';
+import { inkFor, outlineColor } from '../video/textFx';
 import { dragCrop, FULL, type Handle } from './geometry';
 import { TEXT_FONTS, temperatureLayer, toCssFilter, type CropRect, type PhotoEdits, type TextLayer } from './pipeline';
 import { layerBox, type PhotoLayer } from './layers';
@@ -253,9 +253,16 @@ export function textStyle(t: TextLayer, frameW: number): CSSProperties {
     fontFamily: def.family,
     fontWeight: def.weight,
     fontSize: t.size * frameW,
-    color: t.style === 'box' ? boxInk(t.color) : t.color,
+    color: inkFor(t),
+    opacity: t.opacity ?? 1,
   };
   if (t.style === 'shadow') s.textShadow = '0 0.05em 0.25em rgba(0,0,0,0.55)';
+  if (t.style === 'outline') {
+    const o = outlineColor(t.color);
+    const d = '0.07em';
+    s.textShadow = [`${d} 0`, `-${d} 0`, `0 ${d}`, `0 -${d}`, `${d} ${d}`, `-${d} ${d}`, `${d} -${d}`, `-${d} -${d}`].map((v) => `${v} 0 ${o}`).join(', ');
+  }
+  if (t.style === 'neon') s.textShadow = `0 0 0.12em ${t.color}, 0 0 0.35em ${t.color}, 0 0 0.7em ${t.color}`;
   if (t.style === 'box') {
     s.background = t.color;
     s.padding = '0.25em 0.5em';
@@ -288,6 +295,7 @@ export function TextItem({
   onChange,
   onTap,
   onEnd,
+  inner,
 }: {
   t: TextLayer;
   dw: number;
@@ -296,6 +304,8 @@ export function TextItem({
   onChange?: (id: string, g: TextGeometry) => void;
   onTap?: (id: string) => void;
   onEnd?: () => void;
+  /** Своё содержимое вместо обычного текста (анимация, слова субтитров) */
+  inner?: ReactNode;
 }) {
   const el = useRef<HTMLDivElement | null>(null);
   const pts = useRef(new Map<number, { x: number; y: number }>());
@@ -414,7 +424,7 @@ export function TextItem({
       role="button"
       aria-label={`Текст: ${t.text}`}
     >
-      <span style={textStyle(t, dw)}>{t.text || ' '}</span>
+      {inner ?? <span style={textStyle(t, dw)}>{t.text || ' '}</span>}
       {selected && onChange && (
         <span className="text-handle" onPointerDown={begin('handle')} aria-label="Размер и поворот" role="button">
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">

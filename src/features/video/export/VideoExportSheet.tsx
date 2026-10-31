@@ -122,7 +122,7 @@ export function VideoExportSheet({
       if (r === 'shared') ui.toast('Готово. Если выбрали «Сохранить видео» — оно в галерее.', 'ok');
       else if (r === 'saved') ui.toast('Видео сохранено', 'ok');
       else if (r === 'downloaded') ui.toast('Видео скачано', 'ok');
-      else if (r === 'manual') ui.toast('Здесь браузер не разрешает сохранять файлы. Откройте W Studio в Safari.', 'error');
+      else if (r === 'manual') ui.toast('Здесь браузер не разрешает сохранять файлы. Откройте Ws в Safari.', 'error');
     } catch (e) {
       ui.toast((e as Error).message, 'error');
     } finally {
