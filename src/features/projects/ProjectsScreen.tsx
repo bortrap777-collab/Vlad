@@ -52,7 +52,7 @@ export function ProjectsScreen() {
       const r = await deliverFile(transfer.file.blob, transfer.file.filename);
       if (r === 'shared' || r === 'saved') ui.toast('Файл проекта готов к переносу', 'ok');
       else if (r === 'downloaded') ui.toast('Файл проекта скачан', 'ok');
-      else if (r === 'manual') ui.toast('Здесь браузер не разрешает сохранять файлы. Откройте W Studio как приложение.', 'error');
+      else if (r === 'manual') ui.toast('Здесь браузер не разрешает сохранять файлы. Откройте Ws как приложение.', 'error');
     } catch (e) {
       ui.toast((e as Error).message, 'error');
     }
@@ -163,7 +163,7 @@ export function ProjectsScreen() {
                   </b>
                 </div>
                 <p className="muted small">
-                  Отправьте файл на другое устройство (AirDrop, «Файлы», мессенджер, облако) и откройте его там в W Studio: «Мои проекты» → «Импорт». Монтаж,
+                  Отправьте файл на другое устройство (AirDrop, «Файлы», мессенджер, облако) и откройте его там в Ws: «Мои проекты» → «Импорт». Монтаж,
                   правки и все исходники сохранятся без потери качества.
                 </p>
                 <button className="btn btn-primary btn-block" onClick={saveTransfer}>

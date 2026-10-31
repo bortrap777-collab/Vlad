@@ -49,7 +49,7 @@ function UpdateBanner() {
   if (!ready) return null;
   return (
     <div className="update-banner" role="status">
-      <span>Доступна новая версия W Studio</span>
+      <span>Доступна новая версия Ws</span>
       <button className="btn btn-primary btn-sm" onClick={() => location.reload()}>
         Обновить
       </button>

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getMedia, getProject, newId, notifyProjectsChanged, putMedia, updateProject, type ProjectMeta } from '../../lib/db';
 import { baseName } from '../../lib/format';
-import { extractFrames, frameCountFor, isAudioFile, isVideoFile, MediaError, readAudioInfo, readVideoInfo } from '../../lib/media';
+import { extractFrames, frameCountFor, isAudioFile, isImageFile, isVideoFile, MediaError, readAudioInfo, readImageInfo, readVideoInfo } from '../../lib/media';
 import { importMedia } from '../../app/projects';
 import { useNav } from '../../app/nav';
 import { useUi } from '../../components/ui';
-import { EMPTY_TIMELINE, type SourceMeta, type Timeline } from './model';
+import { normalizeTimeline, type SourceMeta, type Timeline } from './model';
 
 export interface LoadedSource extends SourceMeta {
   url: string;
@@ -16,9 +16,10 @@ function migrate(m: ProjectMeta): { sources: SourceMeta[]; timeline: Timeline } 
   const sources: SourceMeta[] = m.sources?.length
     ? m.sources
     : [{ id: m.id, kind: 'video', name: m.name, mime: m.mime, size: m.size, duration: m.duration ?? 0, width: m.width, height: m.height, frames: m.frames }];
+  const durations = Object.fromEntries(sources.map((s) => [s.id, { duration: s.duration }]));
   const timeline: Timeline = m.timeline
-    ? { ...EMPTY_TIMELINE, ...m.timeline }
-    : { clips: [{ id: newId(), src: m.id, in: 0, out: m.duration ?? 0, volume: 1 }], music: null, texts: [] };
+    ? normalizeTimeline(m.timeline as Parameters<typeof normalizeTimeline>[0], durations)
+    : normalizeTimeline({ clips: [{ id: newId(), src: m.id, in: 0, out: m.duration ?? 0, volume: 1 }] });
   return { sources, timeline };
 }
 
@@ -144,24 +145,36 @@ export function useVideoProject(projectId?: string) {
 
   /** Добавить видео или музыку в существующий проект */
   const addSource = useCallback(
-    async (file: File, kind: 'video' | 'audio'): Promise<SourceMeta | null> => {
+    async (file: File, kind: 'video' | 'audio' | 'image' | 'overlay'): Promise<SourceMeta | null> => {
       const m = metaRef.current;
       if (!m) return null;
+      // Наложение: видео или картинка
+      if (kind === 'overlay') {
+        if (isImageFile(file)) kind = 'image';
+        else if (isVideoFile(file)) kind = 'video';
+        else throw new MediaError('Для наложения подойдут видео или картинка (PNG, JPG).');
+      }
       if (kind === 'video' && !isVideoFile(file)) throw new MediaError('Это не видеофайл.');
       if (kind === 'audio' && !isAudioFile(file) && !isVideoFile(file)) throw new MediaError('Это не аудио и не видео. Подойдут MP3, M4A, WAV или видео со звуком.');
-      ui.setProgress({ label: kind === 'video' ? 'Добавляю клип…' : isVideoFile(file) ? 'Беру звук из видео…' : 'Добавляю музыку…', value: 0.2 });
+      ui.setProgress({ label: kind === 'video' ? 'Добавляю видео…' : kind === 'image' ? 'Добавляю картинку…' : isVideoFile(file) ? 'Беру звук из видео…' : 'Добавляю музыку…', value: 0.2 });
       try {
-        const info = kind === 'video' ? await readVideoInfo(file) : { ...(await readAudioInfo(file)), width: undefined, height: undefined };
+        const info =
+          kind === 'video'
+            ? await readVideoInfo(file)
+            : kind === 'image'
+              ? { ...(await readImageInfo(file)), duration: 0 }
+              : { ...(await readAudioInfo(file)), width: undefined, height: undefined };
         ui.setProgress({ label: 'Сохраняю на устройстве…', value: 0.6 });
         const s: SourceMeta = {
           id: newId(),
           kind,
           name: baseName(file.name),
-          mime: file.type || (kind === 'video' ? 'video/mp4' : 'audio/mpeg'),
+          mime: file.type || (kind === 'video' ? 'video/mp4' : kind === 'image' ? 'image/png' : 'audio/mpeg'),
           size: file.size,
           duration: info.duration ?? 0,
           width: info.width,
           height: info.height,
+          frames: kind === 'image' && 'thumb' in info && info.thumb ? [info.thumb as string] : undefined,
         };
         await putMedia(s.id, file, (v) => ui.setProgress({ label: 'Сохраняю на устройстве…', value: 0.6 + v * 0.38 }));
         const nextSources = [...(metaRef.current?.sources ?? []), s];

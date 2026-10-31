@@ -62,7 +62,7 @@ export async function deliverFile(blob: Blob, filename: string): Promise<Deliver
       if (code === 'declined') return 'cancelled';
       if (code === 'rate_limited') throw new Error('Окно сохранения уже открыто. Подождите и повторите.');
       if (code === 'not_signed' || code === 'rejected_extension' || code === 'extension_not_enabled')
-        throw new Error('Этот формат нельзя сохранить внутри Claude. Откройте W Studio в Safari (как приложение) и сохраните оттуда.');
+        throw new Error('Этот формат нельзя сохранить внутри Claude. Откройте Ws в Safari (как приложение) и сохраните оттуда.');
       if (code === 'too_large') throw new Error('Файл слишком большой для сохранения здесь. Выберите качество ниже.');
     }
   }

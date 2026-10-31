@@ -43,15 +43,15 @@ export async function importProjectFile(file: Blob, onProgress: (v: number, labe
   onProgress(0.02, 'Читаю файл…');
   const entries = await readZip(file);
   const mf = entries.find((e) => e.name === 'project.json');
-  if (!mf) throw new ZipError('В архиве нет описания проекта W Studio.');
+  if (!mf) throw new ZipError('В архиве нет описания проекта Ws.');
   let manifest: Manifest;
   try {
     manifest = JSON.parse(await readText(mf));
   } catch {
     throw new ZipError('Описание проекта повреждено.');
   }
-  if (manifest.format !== FORMAT) throw new ZipError('Это не проект W Studio.');
-  if (manifest.version > VERSION) throw new ZipError('Проект создан в более новой версии W Studio. Обновите приложение.');
+  if (manifest.format !== FORMAT) throw new ZipError('Это не проект Ws.');
+  if (manifest.version > VERSION) throw new ZipError('Проект создан в более новой версии Ws. Обновите приложение.');
 
   // Новые идентификаторы
   const old = manifest.project;
@@ -67,11 +67,14 @@ export async function importProjectFile(file: Blob, onProgress: (v: number, labe
     updatedAt: Date.now(),
     sources: old.sources?.map((s) => ({ ...s, id: idFor(s.id) })),
     timeline: old.timeline
-      ? {
+      ? ({
           ...old.timeline,
           clips: old.timeline.clips.map((c) => ({ ...c, src: idFor(c.src) })),
-          music: old.timeline.music ? { ...old.timeline.music, src: idFor(old.timeline.music.src) } : null,
-        }
+          audios: (old.timeline.audios ?? []).map((a) => ({ ...a, src: idFor(a.src) })),
+          overlays: (old.timeline.overlays ?? []).map((o) => ({ ...o, src: idFor(o.src) })),
+          // Проекты до 0.9: одна музыка
+          ...(legacyMusic(old.timeline) ? { music: { ...legacyMusic(old.timeline)!, src: idFor(legacyMusic(old.timeline)!.src) } } : {}),
+        } as ProjectMeta['timeline'])
       : undefined,
     photoEdits: old.photoEdits ? remapEditIds(old.photoEdits, idFor) : old.photoEdits,
   };
@@ -104,4 +107,10 @@ export async function importProjectFile(file: Blob, onProgress: (v: number, labe
   notifyProjectsChanged();
   onProgress(1, 'Готово');
   return project;
+}
+
+/** Музыка в старом формате (до 0.9) — переносится в дорожки при открытии проекта */
+function legacyMusic(t: object): { src: string } | null {
+  const m = (t as { music?: { src: string } | null }).music;
+  return m ?? null;
 }

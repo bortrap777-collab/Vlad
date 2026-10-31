@@ -6,37 +6,51 @@ import { newId } from '../../lib/db';
 import { useHistory } from '../../lib/useHistory';
 import { useElementSize } from '../../lib/useElementSize';
 import { ImportEmpty } from '../shared/ImportEmpty';
-import { TextItem } from '../photo/PhotoView';
-import { TextSheet } from '../photo/TextSheet';
 import { TextSizeControl } from '../photo/TextSizeControl';
 import { useVideoProject } from './useVideoProject';
 import { VideoExportSheet } from './export/VideoExportSheet';
-import { usePlayer } from './usePlayer';
+import { playerKeys, usePlayer } from './usePlayer';
 import { Timeline, clampPps, type Selection } from './Timeline';
-import { FormatSheet, LookSheet, MusicSettings, SpeedSheet, TransitionSheet } from './VideoSheets';
-import { TransitionPreview } from './TransitionPreview';
+import { FormatSheet, LookSheet, TransitionSheet } from './VideoSheets';
 import { SubtitlesSheet } from './SubtitlesSheet';
 import { BlurBackdrop, videoRect } from './FramePreview';
+import { Stage } from './Stage';
+import { VideoTexts } from './VideoTexts';
+import { OverlayBox } from './OverlayBox';
+import { AudioPanel, DEFAULT_KEY, MarkerPanel, OverlayPanel, SpeedPanel, TextPanel } from './Panels';
+import { detectKeyColor } from './gl';
 import { temperatureLayer, toCssFilter } from '../photo/pipeline';
 import {
   EMPTY_TIMELINE,
-  dipAt,
-  transitionLen,
+  MARKER_COLORS,
+  audioEnd,
+  clipStarts,
+  audioSpeed,
   canMergeNext,
-  clampTexts,
+  clampToDuration,
+  clipLanes,
+  dipAt,
   duplicateClip,
   frameRatio,
   hasLook,
+  laneKey,
   locate,
   lookEdits,
   mergeNext,
   moveClip,
   removeClip,
+  rewordText,
+  shiftText,
   speedOf,
   splitAt,
   totalDuration,
+  transitionLen,
+  updateAudio,
   updateClip,
+  updateMarker,
+  updateOverlay,
   updateText,
+  type AudioItem,
   type Timeline as TL,
   type VideoText,
 } from './model';
@@ -49,6 +63,8 @@ function paintDip(el: HTMLDivElement | null, t: TL, T: number) {
   el.style.background = d.color === 'white' ? '#fff' : '#000';
 }
 
+type Dock = 'text' | 'audio' | 'overlay' | 'speed' | 'marker' | null;
+
 export function VideoEditorScreen({ projectId }: { projectId?: string }) {
   const ui = useUi();
   const project = useVideoProject(projectId);
@@ -60,16 +76,16 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
   const [pps, setPps] = useState(30);
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [sheet, setSheet] = useState<'speed' | 'look' | 'format' | null>(null);
+  const [sheet, setSheet] = useState<'look' | 'format' | null>(null);
+  const [dock, setDock] = useState<Dock>(null);
   const [transitionFor, setTransitionFor] = useState<string | null>(null);
   const [subtitlesOpen, setSubtitlesOpen] = useState(false);
   const [musicChoice, setMusicChoice] = useState(false);
   const [frameEl, setFrameEl] = useState<HTMLDivElement | null>(null);
   const fadeRef = useRef<HTMLDivElement>(null);
-  const [editingText, setEditingText] = useState<string | null>(null);
   const loadedFor = useRef<string | null>(null);
   const onPlayError = useCallback((m: string) => ui.toast(m, 'error'), [ui]);
-  const player = usePlayer(timeline, onPlayError);
+  const player = usePlayer(timeline, getBlob, onPlayError);
   const [frameRef, frame] = useElementSize<HTMLDivElement>();
   const [stageRef, stageBox] = useElementSize<HTMLDivElement>();
   const setFrame = useCallback(
@@ -99,10 +115,23 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
 
   // Выбранный объект мог исчезнуть после отмены
   useEffect(() => {
-    if (selection?.kind === 'clip' && !timeline.clips.some((c) => c.id === selection.id)) setSelection(null);
-    if (selection?.kind === 'text' && !timeline.texts.some((t) => t.id === selection.id)) setSelection(null);
-    if (selection?.kind === 'music' && !timeline.music) setSelection(null);
+    const gone =
+      (selection?.kind === 'clip' && !timeline.clips.some((c) => c.id === selection.id)) ||
+      (selection?.kind === 'text' && !timeline.texts.some((t) => t.id === selection.id)) ||
+      (selection?.kind === 'audio' && !timeline.audios.some((t) => t.id === selection.id)) ||
+      (selection?.kind === 'overlay' && !timeline.overlays.some((t) => t.id === selection.id)) ||
+      (selection?.kind === 'marker' && !timeline.markers.some((t) => t.id === selection.id));
+    if (gone) {
+      setSelection(null);
+      setDock(null);
+    }
   }, [timeline, selection]);
+
+  const select = (s: Selection) => {
+    setSelection(s);
+    if (!s) setDock(null);
+    else if (dock && dock !== s.kind && !(dock === 'speed' && s.kind === 'clip')) setDock(null);
+  };
 
   const videoPicker = useFilePicker('video/*', (f) => importFirst(f));
   const clipPicker = useFilePicker('video/*', async (f) => {
@@ -111,7 +140,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
       if (!s) return;
       const clip = { id: newId(), src: s.id, in: 0, out: s.duration, volume: 1 };
       hist.apply((t) => ({ ...t, clips: [...t.clips, clip] }));
-      setSelection({ kind: 'clip', id: clip.id });
+      select({ kind: 'clip', id: clip.id });
       ui.toast('Клип добавлен в конец', 'ok');
     } catch (e) {
       ui.toast((e as Error).message, 'error');
@@ -122,14 +151,32 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
     try {
       const s = await addSource(f, 'audio');
       if (!s) return;
-      hist.apply((t) => ({ ...t, music: { id: newId(), src: s.id, volume: t.music?.volume ?? 0.8 } }));
-      setSelection({ kind: 'music' });
+      // Первая музыка — с начала ролика, следующие звуки — от плейхеда
+      const start = timeline.audios.length ? Math.min(player.timeRef.current, Math.max(0, total - 0.5)) : 0;
+      const len = Math.min(s.duration, Math.max(1, total - start));
+      const a: AudioItem = { id: newId(), src: s.id, start, in: 0, out: len, volume: timeline.audios.length ? 1 : 0.8, fadeIn: 0, fadeOut: s.duration > len ? 1 : 0 };
+      hist.apply((t) => ({ ...t, audios: [...t.audios, a] }));
+      select({ kind: 'audio', id: a.id });
     } catch (e) {
       ui.toast((e as Error).message, 'error');
     }
   };
   const musicPicker = useFilePicker('audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac', addMusic);
   const musicFromVideoPicker = useFilePicker('video/*', addMusic);
+  const overlayPicker = useFilePicker('video/*,image/*', async (f) => {
+    try {
+      const s = await addSource(f, 'overlay');
+      if (!s) return;
+      const start = Math.min(player.timeRef.current, Math.max(0, total - 0.5));
+      const len = s.kind === 'image' ? 3 : s.duration;
+      const o = { id: newId(), src: s.id, start, end: Math.min(total, start + len), in: 0, x: 0.5, y: 0.5, w: 0.6, rotation: 0, opacity: 1, volume: 0, key: null };
+      hist.apply((t) => ({ ...t, overlays: [...t.overlays, o] }));
+      select({ kind: 'overlay', id: o.id });
+      setDock('overlay');
+    } catch (e) {
+      ui.toast((e as Error).message, 'error');
+    }
+  });
   const chooseMusic = () => setMusicChoice(true);
 
   // Пропорции кадра — формат проекта или первое видео
@@ -141,13 +188,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
   // Затемнение кадра (переходы, начало, конец) — прямо в DOM, на каждом кадре
   const tlRef = useRef(timeline);
   tlRef.current = timeline;
-  useEffect(
-    () =>
-      player.subscribe((t) => {
-        paintDip(fadeRef.current, tlRef.current, t);
-      }),
-    [player.subscribe],
-  );
+  useEffect(() => player.subscribe((t) => paintDip(fadeRef.current, tlRef.current, t)), [player.subscribe]);
   useEffect(() => {
     paintDip(fadeRef.current, timeline, player.timeRef.current);
   }, [timeline, player.timeRef]);
@@ -170,13 +211,18 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
 
   /* ---------- Действия ---------- */
   const T = player.time;
-  const selClipIndex = selection?.kind === 'clip' ? timeline.clips.findIndex((c) => c.id === selection.id) : -1;
+  const now = () => player.timeRef.current;
+  const sel = <K extends NonNullable<Selection>['kind']>(k: K) => (selection?.kind === k ? selection.id : null);
+  const selClipIndex = sel('clip') ? timeline.clips.findIndex((c) => c.id === sel('clip')) : -1;
   const selClip = selClipIndex >= 0 ? timeline.clips[selClipIndex] : null;
-  const selText = selection?.kind === 'text' ? timeline.texts.find((t) => t.id === selection.id) ?? null : null;
+  const selText = timeline.texts.find((t) => t.id === sel('text')) ?? null;
+  const selAudio = timeline.audios.find((t) => t.id === sel('audio')) ?? null;
+  const selOverlay = timeline.overlays.find((t) => t.id === sel('overlay')) ?? null;
+  const selMarker = timeline.markers.find((t) => t.id === sel('marker')) ?? null;
   const transitionClip = transitionFor ? timeline.clips.find((c) => c.id === transitionFor) ?? null : null;
 
   const split = () => {
-    const next = splitAt(timeline, player.timeRef.current, newId);
+    const next = splitAt(timeline, now(), newId);
     if (!next) {
       ui.toast('Поставьте плейхед внутрь клипа — не ближе 0,3 с к краю', 'info');
       return;
@@ -184,7 +230,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
     hist.apply(() => next);
   };
   const addText = () => {
-    const start = Math.min(player.timeRef.current, Math.max(0, total - 0.5));
+    const start = Math.min(now(), Math.max(0, total - 0.5));
     const t: VideoText = {
       id: newId(),
       text: 'Ваш текст',
@@ -196,35 +242,74 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
       style: 'shadow',
       start,
       end: Math.min(total, start + 3),
+      animIn: 'blur',
+      animOut: 'fade',
+      animDur: 0.5,
     };
     hist.apply((tl) => ({ ...tl, texts: [...tl.texts, t] }));
     setSelection({ kind: 'text', id: t.id });
-    setEditingText(t.id);
+    setDock('text');
   };
-  const editingLayer = timeline.texts.find((t) => t.id === editingText) ?? null;
-  const openTextEditor = (id: string) => setEditingText(id);
-
-  const volumeValue = selClip ? selClip.volume : timeline.music?.volume ?? 1;
-  const setVolume = (v: number) => {
-    if (selClip) hist.live((t) => updateClip(t, selClip.id, { volume: v }));
-    else if (timeline.music) hist.live((t) => ({ ...t, music: t.music ? { ...t.music, volume: v } : null }));
+  const addMarker = () => {
+    const s = now();
+    const m = { id: newId(), start: s, end: Math.min(total, s + 1), label: '', color: MARKER_COLORS[timeline.markers.length % MARKER_COLORS.length] };
+    hist.apply((t) => ({ ...t, markers: [...t.markers, m] }));
+    setSelection({ kind: 'marker', id: m.id });
+    setDock('marker');
+    ui.toast('Ключ поставлен. Тяните его края на шкале, чтобы отметить промежуток.', 'ok');
+  };
+  const copyText = (x: VideoText) => {
+    // Копия встаёт сразу после оригинала (или от плейхеда, если он правее)
+    const len = x.end - x.start;
+    const start = Math.min(Math.max(x.end, now() > x.end ? now() : x.end), Math.max(0, total - Math.min(len, total)));
+    const copy = shiftText({ ...x, id: newId() }, start);
+    hist.apply((t) => ({ ...t, texts: [...t.texts, copy.end > total ? { ...copy, end: total } : copy] }));
+    setSelection({ kind: 'text', id: copy.id });
+    ui.toast('Копия добавлена — двигайте её по шкале', 'ok');
+  };
+  const splitAudio = (a: AudioItem) => {
+    const T0 = now();
+    if (T0 <= a.start + 0.2 || T0 >= audioEnd(a) - 0.2) return ui.toast('Поставьте плейхед внутрь звука', 'info');
+    const cut = a.in + (T0 - a.start) * audioSpeed(a);
+    const b: AudioItem = { ...a, id: newId(), start: T0, in: cut, fadeIn: 0 };
+    hist.apply((t) => ({ ...t, audios: t.audios.flatMap((x) => (x.id === a.id ? [{ ...x, out: cut, fadeOut: 0 }, b] : [x])) }));
+  };
+  const autoKey = () => {
+    const o = selOverlay;
+    if (!o) return;
+    const s = sources[o.src];
+    let color = DEFAULT_KEY.color;
+    try {
+      const el = s?.kind === 'image' ? (() => {
+        const im = new Image();
+        im.src = s.url;
+        return im.complete ? im : null;
+      })() : player.elements.current.get(`ov:${o.id}`) ?? null;
+      if (el && s?.width && s.height) color = detectKeyColor(el, s.width, s.height);
+    } catch {
+      /* без определения — зелёный */
+    }
+    hist.apply((t) => updateOverlay(t, o.id, { key: { ...(o.key ?? DEFAULT_KEY), color } }));
   };
 
-  const visibleTexts = timeline.texts.filter((t) => T >= t.start && T < t.end);
+  const volumeValue = selClip ? selClip.volume : 1;
+  const setVolume = (v: number) => selClip && hist.live((t) => updateClip(t, selClip.id, { volume: v }));
+
   const dw = frame.width;
   const dh = frame.height;
 
   /* ---------- Панель инструментов по выбору ---------- */
-  let tools: { icon: string; label: string; onClick: () => void; disabled?: boolean; danger?: boolean }[];
+  type Tool = { icon: string; label: string; onClick: () => void; disabled?: boolean; danger?: boolean };
+  let tools: Tool[];
   if (selClip) {
     tools = [
       { icon: 'scissors', label: 'Разделить', onClick: split },
-      { icon: 'speed', label: `Скорость${speedOf(selClip) !== 1 ? ' ' + String(speedOf(selClip)).replace('.', ',') + '×' : ''}`, onClick: () => setSheet('speed') },
+      { icon: 'speed', label: `Скорость${speedOf(selClip) !== 1 ? ' ' + String(speedOf(selClip)).replace('.', ',') + '×' : ''}`, onClick: () => setDock('speed') },
       { icon: 'filters', label: 'Фильтр', onClick: () => setSheet('look') },
       ...(selClipIndex > 0 ? [{ icon: 'transition', label: 'Переход', onClick: () => setTransitionFor(selClip.id) }] : []),
       { icon: 'music', label: 'Звук', onClick: () => setVolumeOpen(true) },
       {
-        icon: 'layers',
+        icon: 'copy',
         label: 'Копия',
         onClick: () => {
           const r = duplicateClip(timeline, selClip.id, newId);
@@ -232,52 +317,109 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
           setSelection({ kind: 'clip', id: r.id });
         },
       },
-      { icon: 'chevronLeft', label: 'Влево', onClick: () => hist.apply((t) => moveClip(t, selClipIndex, selClipIndex - 1)), disabled: selClipIndex === 0 },
-      { icon: 'chevronRight', label: 'Вправо', onClick: () => hist.apply((t) => moveClip(t, selClipIndex, selClipIndex + 1)), disabled: selClipIndex === timeline.clips.length - 1 },
-      ...(canMergeNext(timeline, selClipIndex) ? [{ icon: 'check', label: 'Склеить', onClick: () => hist.apply((t) => mergeNext(t, selClipIndex)) }] : []),
+      ...(canMergeNext(timeline, selClipIndex) ? [{ icon: 'merge', label: 'Склеить', onClick: () => hist.apply((t) => mergeNext(t, selClipIndex)) }] : []),
+      { icon: 'chevronLeft', label: 'Левее', onClick: () => hist.apply((t) => moveClip(t, selClipIndex, selClipIndex - 1)), disabled: selClipIndex === 0 },
+      { icon: 'chevronRight', label: 'Правее', onClick: () => hist.apply((t) => moveClip(t, selClipIndex, selClipIndex + 1)), disabled: selClipIndex === timeline.clips.length - 1 },
       {
         icon: 'trash',
         label: 'Удалить',
         danger: true,
         onClick: () => {
-          hist.apply((t) => clampTexts(removeClip(t, selClip.id)));
-          setSelection(null);
+          hist.apply((t) => clampToDuration(removeClip(t, selClip.id)));
+          select(null);
         },
       },
     ];
   } else if (selText) {
     tools = [
-      { icon: 'text', label: 'Изменить', onClick: () => openTextEditor(selText.id) },
+      { icon: 'text', label: 'Изменить', onClick: () => setDock('text') },
+      { icon: 'copy', label: 'Копия', onClick: () => copyText(selText) },
       {
         icon: 'scissors',
         label: 'До плейхеда',
         onClick: () => {
-          const now = player.timeRef.current;
-          if (now <= selText.start + 0.3) return ui.toast('Плейхед должен быть правее начала текста', 'info');
-          hist.apply((t) => updateText(t, selText.id, { end: now }));
+          const n = now();
+          if (n <= selText.start + 0.2) return ui.toast('Плейхед должен быть правее начала текста', 'info');
+          hist.apply((t) => updateText(t, selText.id, { end: n, words: selText.words?.filter((w) => w.s < n) }));
         },
       },
+      ...(selText.subtitle ? [{ icon: 'captions', label: 'Все субтитры', onClick: () => setSubtitlesOpen(true) }] : []),
       {
         icon: 'trash',
         label: 'Удалить',
         danger: true,
         onClick: () => {
           hist.apply((t) => ({ ...t, texts: t.texts.filter((x) => x.id !== selText.id) }));
-          setSelection(null);
+          select(null);
         },
       },
     ];
-  } else if (selection?.kind === 'music') {
+  } else if (selAudio) {
     tools = [
-      { icon: 'music', label: 'Звук', onClick: () => setVolumeOpen(true) },
+      { icon: 'music', label: 'Звук', onClick: () => setDock('audio') },
+      { icon: 'scissors', label: 'Разделить', onClick: () => splitAudio(selAudio) },
+      {
+        icon: 'copy',
+        label: 'Копия',
+        onClick: () => {
+          const c = { ...selAudio, id: newId(), start: audioEnd(selAudio) };
+          hist.apply((t) => ({ ...t, audios: [...t.audios, c] }));
+          setSelection({ kind: 'audio', id: c.id });
+        },
+      },
       { icon: 'reset', label: 'Заменить', onClick: chooseMusic },
       {
         icon: 'trash',
         label: 'Удалить',
         danger: true,
         onClick: () => {
-          hist.apply((t) => ({ ...t, music: null }));
-          setSelection(null);
+          hist.apply((t) => ({ ...t, audios: t.audios.filter((x) => x.id !== selAudio.id) }));
+          select(null);
+        },
+      },
+    ];
+  } else if (selOverlay) {
+    tools = [
+      { icon: 'cutout', label: 'Хромакей', onClick: () => setDock('overlay') },
+      {
+        icon: 'copy',
+        label: 'Копия',
+        onClick: () => {
+          const c = { ...selOverlay, id: newId(), x: Math.min(0.9, selOverlay.x + 0.05), y: Math.min(0.9, selOverlay.y + 0.05) };
+          hist.apply((t) => ({ ...t, overlays: [...t.overlays, c] }));
+          setSelection({ kind: 'overlay', id: c.id });
+        },
+      },
+      {
+        icon: 'scissors',
+        label: 'До плейхеда',
+        onClick: () => {
+          const n = now();
+          if (n <= selOverlay.start + 0.2) return ui.toast('Плейхед должен быть правее начала', 'info');
+          hist.apply((t) => updateOverlay(t, selOverlay.id, { end: n }));
+        },
+      },
+      {
+        icon: 'trash',
+        label: 'Удалить',
+        danger: true,
+        onClick: () => {
+          hist.apply((t) => ({ ...t, overlays: t.overlays.filter((x) => x.id !== selOverlay.id) }));
+          select(null);
+        },
+      },
+    ];
+  } else if (selMarker) {
+    tools = [
+      { icon: 'text', label: 'Изменить', onClick: () => setDock('marker') },
+      { icon: 'play', label: 'Перейти', onClick: () => player.seek(selMarker.start) },
+      {
+        icon: 'trash',
+        label: 'Удалить',
+        danger: true,
+        onClick: () => {
+          hist.apply((t) => ({ ...t, markers: t.markers.filter((x) => x.id !== selMarker.id) }));
+          select(null);
         },
       },
     ];
@@ -285,7 +427,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
     tools = [
       { icon: 'plus', label: 'Клип', onClick: clipPicker.open },
       { icon: 'scissors', label: 'Разделить', onClick: split, disabled: !timeline.clips.length },
-      { icon: 'music', label: 'Музыка', onClick: timeline.music ? () => setSelection({ kind: 'music' }) : chooseMusic },
+      { icon: 'music', label: 'Музыка', onClick: chooseMusic, disabled: !timeline.clips.length },
       { icon: 'text', label: 'Текст', onClick: addText, disabled: !timeline.clips.length },
       {
         icon: 'captions',
@@ -296,16 +438,17 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         },
         disabled: !timeline.clips.length,
       },
+      { icon: 'layers', label: 'Наложение', onClick: overlayPicker.open, disabled: !timeline.clips.length },
+      { icon: 'target', label: 'Ключ', onClick: addMarker, disabled: !timeline.clips.length },
       { icon: 'crop', label: 'Формат', onClick: () => setSheet('format'), disabled: !timeline.clips.length },
     ];
   }
 
-  const videoSources = Object.values(sources).filter((s) => s.kind === 'video');
+  const keys = playerKeys(timeline, (id) => sources[id]?.kind === 'video');
   // Кадр вписываем сами: и ширина, и высота ограничены, пропорция сохраняется точно
-  const maxH = Math.max(160, window.innerHeight * 0.44);
+  const maxH = Math.max(160, window.innerHeight * (dock ? 0.38 : 0.44));
   const fw = Math.min(stageBox.width || 358, maxH * aspect);
   const frameSize = { width: fw, height: fw / aspect };
-  const musicSrc = timeline.music ? sources[timeline.music.src] : null;
 
   // Текущий клип под плейхедом: его фильтр и положение в кадре
   const fill = (timeline.fit ?? 'fit') === 'fill';
@@ -317,6 +460,9 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
   const curFilter = curEdits ? toCssFilter(curEdits) : undefined;
   const curTemp = curEdits ? temperatureLayer(curEdits) : null;
   const rect = videoRect(frameSize.width, frameSize.height, curSrc?.width ?? 0, curSrc?.height ?? 0, fill);
+  const lanes = clipLanes(timeline);
+  const curKey = curLoc ? laneKey(curClip!.src, lanes[curLoc.index]) : '';
+  const visibleOverlays = timeline.overlays.filter((o) => T >= o.start && T < o.end);
 
   return (
     <div className="screen screen-fixed editor">
@@ -328,7 +474,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
             disabled={!timeline.clips.length}
             onClick={() => {
               player.pause();
-              setSelection(null);
+              select(null);
               setExportOpen(true);
             }}
           >
@@ -338,59 +484,85 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
       />
 
       <div className="editor-stage" ref={stageRef}>
-        <div
-          className="video-frame"
-          style={frameSize}
-          ref={setFrame}
-          onClick={() => (selection ? setSelection(null) : player.toggle())}
-        >
+        <div className="video-frame" style={frameSize} ref={setFrame} onClick={() => (selection ? select(null) : player.toggle())}>
           {showBlur && timeline.clips.length > 0 && <BlurBackdrop host={frameEl} />}
-          {videoSources.map((s) => (
-            <video
-              key={s.id}
-              ref={player.registerVideo(s.id)}
-              src={s.url}
-              playsInline
-              preload="auto"
-              style={{ objectFit: fill ? 'cover' : 'contain', filter: player.activeSrc === s.id ? curFilter : undefined }}
-              className={player.activeSrc === s.id ? 'is-active' : ''}
-              onError={() => s.id === player.activeSrc && ui.toast('Видео не открылось. Откройте файл заново из галереи.', 'error')}
-            />
-          ))}
-          {timeline.clips.some((c, i) => i > 0 && c.transition && c.transition !== 'none' && c.transition !== 'fade' && c.transition !== 'white') && (
-            <TransitionPreview
-              timeline={timeline}
-              sources={sources}
-              host={frameEl}
-              width={frameSize.width}
-              height={frameSize.height}
-              subscribe={player.subscribe}
-              timeRef={player.timeRef}
-            />
-          )}
+          {keys.map(({ key, src }) => {
+            const s = sources[src];
+            if (!s) return null;
+            const isOverlay = key.startsWith('ov:');
+            const on = !isOverlay && player.shown.includes(key);
+            return (
+              <video
+                key={key}
+                ref={player.registerVideo(key)}
+                src={s.url}
+                playsInline
+                preload="auto"
+                data-key={key}
+                style={{ objectFit: fill ? 'cover' : 'contain', filter: on && key === curKey ? curFilter : undefined, zIndex: key === player.shown[player.shown.length - 1] ? 2 : 1 }}
+                className={isOverlay ? 'ov-video' : on ? 'is-active' : ''}
+                onError={() => key === curKey && ui.toast('Видео не открылось. Откройте файл заново из галереи.', 'error')}
+              />
+            );
+          })}
+          <Stage
+            timeline={timeline}
+            sources={sources}
+            width={frameSize.width}
+            height={frameSize.height}
+            elements={player.elements}
+            frameState={player.frameState}
+            playingRef={player.playingRef}
+            subscribe={player.subscribe}
+            timeRef={player.timeRef}
+            filter={curFilter}
+          />
           {curTemp && <div className="temp-layer clip-temp" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h, background: curTemp.color, opacity: curTemp.opacity }} />}
-          {musicSrc && <audio ref={player.musicEl} src={musicSrc.url} preload="auto" />}
           {(loading || !timeline.clips.length) && (
             <div className="frame-empty">{loading ? <div className="skeleton fill" /> : <span>Добавьте клип, чтобы начать</span>}</div>
           )}
           {dw > 0 &&
-            visibleTexts.map((t) => (
-              <TextItem
-                key={t.id}
-                t={t}
-                dw={dw}
-                dh={dh}
-                selected={selText?.id === t.id}
-                onChange={(id, g) => hist.live((tl) => updateText(tl, id, g))}
-                onEnd={hist.endGesture}
-                onTap={(id) => {
-                  hist.endGesture();
-                  if (selText?.id === id) openTextEditor(id);
-                  else setSelection({ kind: 'text', id });
-                }}
-              />
-            ))}
+            visibleOverlays.map((o) => {
+              const s = sources[o.src];
+              const aspectO = s?.width && s.height ? s.height / s.width : 9 / 16;
+              return (
+                <OverlayBox
+                  key={o.id}
+                  g={{ x: o.x, y: o.y, w: o.w, rotation: o.rotation }}
+                  aspect={aspectO}
+                  dw={dw}
+                  dh={dh}
+                  selected={selOverlay?.id === o.id}
+                  onChange={(g) => hist.live((t) => updateOverlay(t, o.id, g))}
+                  onEnd={hist.endGesture}
+                  onTap={() => {
+                    hist.endGesture();
+                    if (selOverlay?.id === o.id) setDock('overlay');
+                    else select({ kind: 'overlay', id: o.id });
+                  }}
+                />
+              );
+            })}
+          {dw > 0 && (
+            <VideoTexts
+              texts={timeline.texts}
+              dw={dw}
+              dh={dh}
+              selectedId={selText?.id ?? null}
+              still={!player.playing}
+              subscribe={player.subscribe}
+              timeRef={player.timeRef}
+              onChange={(id, g) => hist.live((tl) => updateText(tl, id, g))}
+              onEnd={hist.endGesture}
+              onTap={(id) => {
+                hist.endGesture();
+                if (selText?.id === id) setDock('text');
+                else select({ kind: 'text', id });
+              }}
+            />
+          )}
           <div className="fade-black" ref={fadeRef} aria-hidden="true" />
+          {player.buffering && <div className="frame-buffering" aria-label="Загрузка" />}
           <button
             className={`play-btn ${player.playing ? 'is-playing' : ''}`}
             aria-label={player.playing ? 'Пауза' : 'Воспроизвести'}
@@ -406,6 +578,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         <div className="time-row">
           <span className="timecode">
             {formatTime(T)} <span className="muted">/ {formatTime(total)}</span>
+            {player.audioStatus.busy > 0 && <span className="audio-busy"> · готовлю звук…</span>}
           </span>
           <div className="undo-redo">
             <button className="icon-btn icon-btn-sm" aria-label="Уменьшить масштаб" onClick={() => setPps(clampPps(pps / 1.6))}>
@@ -425,60 +598,145 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         </div>
       </div>
 
-      <Timeline
-        timeline={timeline}
-        sources={sources}
-        pps={pps}
-        setPps={setPps}
-        selection={selection}
-        onSelect={setSelection}
-        subscribe={player.subscribe}
-        timeRef={player.timeRef}
-        onScrub={player.seek}
-        onUserInteract={() => player.playing && player.pause()}
-        live={hist.live}
-        apply={hist.apply}
-        endGesture={hist.endGesture}
-        onAddClip={clipPicker.open}
-        onAddMusic={chooseMusic}
-        onAddText={addText}
-        onTransition={(id) => {
-          player.pause();
-          setTransitionFor(id);
-        }}
-      />
-
-      {selText && (
-        <div className="quick-row">
-          <TextSizeControl
-            size={selText.size}
-            rotation={selText.rotation}
-            onChange={(size) => hist.live((t) => updateText(t, selText.id, { size }))}
-            onEnd={hist.endGesture}
-            onResetRotation={() => hist.apply((t) => updateText(t, selText.id, { rotation: 0 }))}
+      {dock === 'text' && selText ? (
+        <TextPanel
+          t={selText}
+          onChange={(p) =>
+            hist.live((t) => {
+              if (p.text === undefined) return updateText(t, selText.id, p);
+              const { text, ...rest } = p;
+              return { ...t, texts: t.texts.map((x) => (x.id === selText.id ? { ...rewordText(x, text), ...rest } : x)) };
+            })
+          }
+          onCommit={hist.endGesture}
+          onDone={() => {
+            hist.endGesture();
+            if (!selText.text.trim()) {
+              hist.apply((t) => ({ ...t, texts: t.texts.filter((x) => x.id !== selText.id) }));
+              select(null);
+            }
+            setDock(null);
+          }}
+          onApplyStyleAll={
+            selText.subtitle
+              ? () => {
+                  const { font, color, style, size, y, opacity, animIn, animOut, animDur, wordMode, highlight } = selText;
+                  hist.apply((t) => ({ ...t, texts: t.texts.map((x) => (x.subtitle ? { ...x, font, color, style, size, y, opacity, animIn, animOut, animDur, wordMode, highlight } : x)) }));
+                  ui.toast('Оформление применено ко всем субтитрам', 'ok');
+                }
+              : undefined
+          }
+        />
+      ) : dock === 'audio' && selAudio ? (
+        <AudioPanel
+          a={selAudio}
+          trackDuration={sources[selAudio.src]?.duration ?? selAudio.out}
+          busy={player.audioStatus.busy > 0}
+          onChange={(p) => hist.live((t) => updateAudio(t, selAudio.id, p))}
+          onCommit={hist.endGesture}
+          onDone={() => {
+            hist.endGesture();
+            setDock(null);
+          }}
+        />
+      ) : dock === 'overlay' && selOverlay ? (
+        <OverlayPanel
+          o={selOverlay}
+          isVideo={sources[selOverlay.src]?.kind === 'video'}
+          onChange={(p) => hist.live((t) => updateOverlay(t, selOverlay.id, p))}
+          onCommit={hist.endGesture}
+          onAutoKey={autoKey}
+          onDone={() => {
+            hist.endGesture();
+            setDock(null);
+          }}
+        />
+      ) : dock === 'speed' && selClip ? (
+        <SpeedPanel
+          speed={speedOf(selClip)}
+          smooth={!!selClip.smooth}
+          onChange={(p) => hist.apply((t) => clampToDuration(updateClip(t, selClip.id, p)))}
+          onDone={() => setDock(null)}
+        />
+      ) : dock === 'marker' && selMarker ? (
+        <MarkerPanel
+          m={selMarker}
+          onChange={(p) => hist.live((t) => updateMarker(t, selMarker.id, p))}
+          onCommit={hist.endGesture}
+          onDone={() => {
+            hist.endGesture();
+            setDock(null);
+          }}
+          onToPlayhead={() => {
+            const n = now();
+            if (n <= selMarker.start + 0.05) return ui.toast('Плейхед должен быть правее начала ключа', 'info');
+            hist.apply((t) => updateMarker(t, selMarker.id, { end: n }));
+          }}
+          onDelete={() => {
+            hist.apply((t) => ({ ...t, markers: t.markers.filter((x) => x.id !== selMarker.id) }));
+            select(null);
+          }}
+        />
+      ) : (
+        <>
+          <Timeline
+            timeline={timeline}
+            sources={sources}
+            pps={pps}
+            setPps={setPps}
+            selection={selection}
+            onSelect={select}
+            subscribe={player.subscribe}
+            timeRef={player.timeRef}
+            onScrub={player.seek}
+            onUserInteract={() => player.playing && player.pause()}
+            live={hist.live}
+            apply={hist.apply}
+            endGesture={hist.endGesture}
+            onAddClip={clipPicker.open}
+            onAddMusic={chooseMusic}
+            onAddText={addText}
+            onTransition={(id) => {
+              player.pause();
+              setTransitionFor(id);
+            }}
+            readSource={getBlob}
           />
-        </div>
+
+          {selText && (
+            <div className="quick-row">
+              <TextSizeControl
+                size={selText.size}
+                rotation={selText.rotation}
+                onChange={(size) => hist.live((t) => updateText(t, selText.id, { size }))}
+                onEnd={hist.endGesture}
+                onResetRotation={() => hist.apply((t) => updateText(t, selText.id, { rotation: 0 }))}
+              />
+            </div>
+          )}
+          <nav className="toolbar" aria-label="Инструменты видео">
+            {selection && (
+              <button className="tool tool-done" onClick={() => select(null)}>
+                <Icon name="check" size={24} stroke={2.4} />
+                <span>Готово</span>
+              </button>
+            )}
+            {tools.map((t) => (
+              <button key={t.label} className={`tool ${t.danger ? 'tool-danger' : ''}`} onClick={t.onClick} disabled={t.disabled}>
+                <Icon name={t.icon} size={24} />
+                <span>{t.label}</span>
+              </button>
+            ))}
+          </nav>
+        </>
       )}
-      <nav className="toolbar" aria-label="Инструменты видео">
-        {selection && (
-          <button className="tool tool-done" onClick={() => setSelection(null)}>
-            <Icon name="check" size={24} stroke={2.4} />
-            <span>Готово</span>
-          </button>
-        )}
-        {tools.map((t) => (
-          <button key={t.label} className={`tool ${t.danger ? 'tool-danger' : ''}`} onClick={t.onClick} disabled={t.disabled}>
-            <Icon name={t.icon} size={24} />
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </nav>
 
       {clipPicker.input}
       {musicPicker.input}
       {musicFromVideoPicker.input}
+      {overlayPicker.input}
 
-      <Sheet open={musicChoice} onClose={() => setMusicChoice(false)} title="Музыка">
+      <Sheet open={musicChoice} onClose={() => setMusicChoice(false)} title={selAudio ? 'Заменить звук' : 'Музыка и звуки'}>
         <div className="feature-sheet">
           <div className="source-choice">
             <button className="source-btn" onClick={musicPicker.open}>
@@ -500,7 +758,9 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
               </span>
             </button>
           </div>
-          <p className="muted small">Музыку из «Apple Музыки» браузер не видит: сохраните трек в «Файлы» или возьмите звук из видео.</p>
+          <p className="muted small">
+            {timeline.audios.length ? 'Новый звук встанет от плейхеда отдельной дорожкой. ' : ''}Музыку из «Apple Музыки» браузер не видит: сохраните трек в «Файлы» или возьмите звук из видео.
+          </p>
         </div>
       </Sheet>
 
@@ -513,8 +773,9 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         onDone={(texts, info) => {
           hist.apply((t) => ({ ...t, texts: [...t.texts.filter((x) => !x.subtitle), ...texts] }));
           setSubtitlesOpen(false);
-          ui.toast(`Готово: ${texts.length} субтитров за ${Math.round(info.seconds)} с. Нажмите на текст в кадре, чтобы исправить слово.`, 'ok');
+          ui.toast(`Готово: ${texts.length} субтитров за ${Math.round(info.seconds)} с. Слова появляются в момент произнесения.`, 'ok');
         }}
+        onShiftAll={(d) => hist.apply((t) => ({ ...t, texts: t.texts.map((x) => (x.subtitle ? shiftText(x, Math.max(0, x.start + d)) : x)) }))}
         onRemoveAll={() => {
           hist.apply((t) => ({ ...t, texts: t.texts.filter((x) => !x.subtitle) }));
           setSubtitlesOpen(false);
@@ -528,7 +789,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
           hist.endGesture();
           setVolumeOpen(false);
         }}
-        title={selClip ? 'Громкость клипа' : 'Музыка'}
+        title="Громкость клипа"
       >
         <div className="feature-sheet">
           <div className="slider-row" style={{ width: '100%' }}>
@@ -554,13 +815,6 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
               </button>
             ))}
           </div>
-          {!selClip && timeline.music && (
-            <MusicSettings
-              timeline={timeline}
-              trackDuration={musicSrc?.duration ?? 0}
-              onChange={(p) => hist.live((t) => ({ ...t, music: t.music ? { ...t.music, ...p } : null }))}
-            />
-          )}
           <p className="muted small">Изменения слышно сразу при воспроизведении.</p>
           <button
             className="btn btn-primary btn-block"
@@ -574,12 +828,6 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         </div>
       </Sheet>
 
-      <SpeedSheet
-        open={sheet === 'speed' && !!selClip}
-        value={selClip ? speedOf(selClip) : 1}
-        onChange={(v) => selClip && hist.apply((t) => clampTexts(updateClip(t, selClip.id, { speed: v })))}
-        onClose={() => setSheet(null)}
-      />
       <LookSheet
         open={sheet === 'look' && !!selClip}
         look={selClip?.look}
@@ -604,50 +852,26 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
         onChange={(p) => {
           if (!transitionClip) return;
           hist.apply((t) => updateClip(t, transitionClip.id, p));
-          // Показываем переход сразу: ставим плейхед чуть раньше стыка
+          // Показываем переход сразу: ставим плейхед чуть раньше стыка и проигрываем
           const idx = timeline.clips.findIndex((c) => c.id === transitionClip.id);
-          const startOf = timeline.clips.slice(0, idx).reduce((a, c) => a + (c.out - c.in) / speedOf(c), 0);
-          player.seek(Math.max(0, startOf - 0.15));
+          const startOf = clipStarts(timeline)[idx] ?? 0;
+          player.seek(Math.max(0, startOf - transitionLen({ ...transitionClip, ...p }) / 2 - 0.4));
         }}
+        onPreview={() => player.toggle()}
         onApplyAll={() => {
           if (!transitionClip) return;
           const { transition, transitionDuration } = transitionClip;
           hist.apply((t) => ({ ...t, clips: t.clips.map((c, i) => (i === 0 ? c : { ...c, transition, transitionDuration })) }));
           ui.toast('Переход применён ко всем стыкам', 'ok');
         }}
-        onClose={() => setTransitionFor(null)}
+        onClose={() => {
+          player.pause();
+          setTransitionFor(null);
+        }}
       />
       <FormatSheet open={sheet === 'format'} timeline={timeline} onChange={(p) => hist.apply((t) => ({ ...t, ...p }))} onClose={() => setSheet(null)} />
 
-      <VideoExportSheet
-        open={exportOpen}
-        onClose={() => setExportOpen(false)}
-        timeline={timeline}
-        sources={sources}
-        readSource={getBlob}
-        name={meta?.name ?? 'video'}
-        beforeStart={player.pause}
-      />
-
-      <TextSheet
-        layer={editingLayer}
-        onChange={(p) => editingLayer && hist.live((t) => updateText(t, editingLayer.id, p))}
-        onDelete={() => {
-          if (!editingLayer) return;
-          hist.endGesture();
-          hist.apply((t) => ({ ...t, texts: t.texts.filter((x) => x.id !== editingLayer.id) }));
-          setEditingText(null);
-          setSelection(null);
-        }}
-        onClose={() => {
-          hist.endGesture();
-          if (editingLayer && !editingLayer.text.trim()) {
-            hist.apply((t) => ({ ...t, texts: t.texts.filter((x) => x.id !== editingLayer.id) }));
-            setSelection(null);
-          }
-          setEditingText(null);
-        }}
-      />
+      <VideoExportSheet open={exportOpen} onClose={() => setExportOpen(false)} timeline={timeline} sources={sources} readSource={getBlob} name={meta?.name ?? 'video'} beforeStart={player.pause} />
     </div>
   );
 }

@@ -12,9 +12,8 @@ export function HomeScreen() {
   return (
     <div className="screen screen-scroll home">
       <header className="home-header">
-        <h1 className="brand" aria-label="W Studio">
+        <h1 className="brand" aria-label="Ws">
           <LogoMark size={44} />
-          <span>Studio</span>
         </h1>
         <button className="icon-btn icon-btn-lg" onClick={() => nav.push({ name: 'settings' })} aria-label="Настройки">
           <Icon name="gear" size={26} />

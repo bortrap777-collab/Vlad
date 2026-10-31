@@ -1,42 +1,27 @@
 /**
- * Громкость через Web Audio. На iPhone свойство media.volume только для чтения,
- * поэтому каждый <video>/<audio> подключается к GainNode.
- * AudioContext создаётся и «размораживается» только по нажатию пользователя.
+ * Громкость <video>/<audio> через Web Audio. На iPhone свойство media.volume только для чтения,
+ * поэтому каждый элемент подключается к GainNode общего AudioContext.
  */
-type Ctx = AudioContext;
+import { audioCtx, unlockAudio } from './audio/ctx';
 
 export class Mixer {
-  private ctx: Ctx | null = null;
   private gains = new Map<HTMLMediaElement, GainNode>();
   private wanted = new Map<HTMLMediaElement, number>();
-  failed = false;
 
   /** Вызывать синхронно внутри обработчика нажатия. */
   unlock(elements: HTMLMediaElement[]): void {
-    if (this.failed) return;
-    try {
-      if (!this.ctx) {
-        const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (!AC) {
-          this.failed = true;
-          return;
-        }
-        this.ctx = new AC();
-      }
-      if (this.ctx.state !== 'running') this.ctx.resume().catch(() => undefined);
-      elements.forEach((el) => this.attach(el));
-    } catch {
-      this.failed = true;
-    }
+    const ctx = unlockAudio();
+    if (!ctx) return;
+    elements.forEach((el) => this.attach(ctx, el));
   }
 
-  private attach(el: HTMLMediaElement): void {
-    if (!this.ctx || this.gains.has(el)) return;
+  private attach(ctx: AudioContext, el: HTMLMediaElement): void {
+    if (this.gains.has(el)) return;
     try {
-      const src = this.ctx.createMediaElementSource(el);
-      const g = this.ctx.createGain();
+      const src = ctx.createMediaElementSource(el);
+      const g = ctx.createGain();
       g.gain.value = this.wanted.get(el) ?? 1;
-      src.connect(g).connect(this.ctx.destination);
+      src.connect(g).connect(ctx.destination);
       this.gains.set(el, g);
     } catch {
       /* элемент уже подключён или браузер не дал — остаётся обычная громкость */
@@ -45,9 +30,11 @@ export class Mixer {
 
   setVolume(el: HTMLMediaElement | null | undefined, v: number): void {
     if (!el) return;
+    if (Math.abs((this.wanted.get(el) ?? -1) - v) < 1e-3) return;
     this.wanted.set(el, v);
     const g = this.gains.get(el);
-    if (g && this.ctx) g.gain.setTargetAtTime(v, this.ctx.currentTime, 0.015);
+    const ctx = audioCtx();
+    if (g && ctx) g.gain.setTargetAtTime(v, ctx.currentTime, 0.015);
     else {
       try {
         el.volume = Math.max(0, Math.min(1, v));
