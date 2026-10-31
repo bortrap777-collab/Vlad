@@ -44,6 +44,10 @@ interface Props {
   timeRef: { current: number };
   onScrub: (t: number) => void;
   onUserInteract: () => void;
+  /** Палец начал прокручивать шкалу (перемотка) */
+  onScrubStart?: () => void;
+  /** Прокрутка закончилась (палец отпущен, инерция остановилась) */
+  onScrubEnd?: () => void;
   live: (fn: (t: TL) => TL) => void;
   apply: (fn: (t: TL) => TL) => void;
   endGesture: () => void;
@@ -114,14 +118,56 @@ export function Timeline(props: Props) {
   useEffect(() => subscribe(setScroll), [subscribe]);
   useEffect(() => setScroll(timeRef.current), [pps, viewW, total]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Прокрутка пальцем → перемотка
+  // Прокрутка пальцем → перемотка. Начало и конец прокрутки сообщаем наверх:
+  // если видео играло, после остановки оно продолжается с нового места.
+  const scrubbing = useRef(false);
+  const touching = useRef(false);
+  const scrubIdle = useRef(0);
+  const finishScrubSoon = () => {
+    window.clearTimeout(scrubIdle.current);
+    scrubIdle.current = window.setTimeout(() => {
+      if (touching.current || !scrubbing.current) return;
+      scrubbing.current = false;
+      props.onScrubEnd?.();
+    }, 180);
+  };
   const onScroll = () => {
     const el = scroller.current;
     if (!el || holdScroll.current) return;
     if (Math.abs(el.scrollLeft - lastSet.current) <= 1) return;
     lastSet.current = -1;
+    if (!scrubbing.current) {
+      scrubbing.current = true;
+      props.onScrubStart?.();
+    }
     onScrub(el.scrollLeft / ppsRef.current);
+    finishScrubSoon();
   };
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const down = () => (touching.current = true);
+    const up = () => {
+      touching.current = false;
+      if (scrubbing.current) finishScrubSoon();
+    };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('touchstart', down, { passive: true });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    window.addEventListener('touchend', up);
+    window.addEventListener('touchcancel', up);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      el.removeEventListener('touchstart', down);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      window.removeEventListener('touchend', up);
+      window.removeEventListener('touchcancel', up);
+      window.clearTimeout(scrubIdle.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Масштаб двумя пальцами
   useEffect(() => {
@@ -404,7 +450,7 @@ export function Timeline(props: Props) {
 
   return (
     <div className="tl" ref={root}>
-      <div className="tl-scroll" ref={scroller} onScroll={onScroll} onPointerDown={onUserInteract} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
+      <div className="tl-scroll" ref={scroller} onScroll={onScroll} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
         <div className="tl-content" style={{ width: contentW + viewW, height }} onClick={(e) => e.target === e.currentTarget && onSelect(null)}>
           {/* Ключи — отмеченные промежутки */}
           <div className="tl-abs" style={{ top: yMarks, left: half, width: contentW, height: MARK_H }}>

@@ -86,6 +86,8 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
   const loadedFor = useRef<string | null>(null);
   const onPlayError = useCallback((m: string) => ui.toast(m, 'error'), [ui]);
   const player = usePlayer(timeline, getBlob, onPlayError);
+  const resumeAfterScrub = useRef(false);
+  const [scrubResume, setScrubResume] = useState(false);
   const [frameRef, frame] = useElementSize<HTMLDivElement>();
   const [stageRef, stageBox] = useElementSize<HTMLDivElement>();
   const setFrame = useCallback(
@@ -564,7 +566,7 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
           <div className="fade-black" ref={fadeRef} aria-hidden="true" />
           {player.buffering && <div className="frame-buffering" aria-label="Загрузка" />}
           <button
-            className={`play-btn ${player.playing ? 'is-playing' : ''}`}
+            className={`play-btn ${player.playing || scrubResume ? 'is-playing' : ''}`}
             aria-label={player.playing ? 'Пауза' : 'Воспроизвести'}
             onClick={(e) => {
               e.stopPropagation();
@@ -689,7 +691,25 @@ export function VideoEditorScreen({ projectId }: { projectId?: string }) {
             subscribe={player.subscribe}
             timeRef={player.timeRef}
             onScrub={player.seek}
-            onUserInteract={() => player.playing && player.pause()}
+            onUserInteract={() => {
+              resumeAfterScrub.current = false;
+              if (player.playing) player.pause();
+            }}
+            onScrubStart={() => {
+              // Играло — на время перемотки ставим на паузу (кнопку не показываем), потом продолжаем с нового места
+              if (player.playingRef.current) {
+                resumeAfterScrub.current = true;
+                setScrubResume(true);
+                player.pause();
+              }
+            }}
+            onScrubEnd={() => {
+              setScrubResume(false);
+              if (resumeAfterScrub.current) {
+                resumeAfterScrub.current = false;
+                player.play();
+              }
+            }}
             live={hist.live}
             apply={hist.apply}
             endGesture={hist.endGesture}

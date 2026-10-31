@@ -99,13 +99,17 @@ export function LogoMark({ size = 34 }: { size?: number }) {
           <stop offset="0" stopColor="var(--logo-a)" />
           <stop offset="1" stopColor="var(--logo-b)" />
         </linearGradient>
+        <linearGradient id="ws-logo-s" gradientUnits="userSpaceOnUse" x1="490" y1="280" x2="590" y2="410">
+          <stop offset="0" stopColor="#FF7AD9" />
+          <stop offset="1" stopColor="#8A5CFF" />
+        </linearGradient>
       </defs>
       <path d="M96 150h70l46 170 44-150h56l44 150 46-170h70l-84 236h-62l-42-140-42 140h-62z" fill="url(#ws-logo-g)" />
       <path
         d="M436 300c-8-14-24-20-40-20-20 0-34 10-34 24 0 30 76 16 76 48 0 16-16 28-40 28-18 0-34-8-42-22"
         transform="translate(140 10)"
         fill="none"
-        stroke="var(--logo-b)"
+        stroke="url(#ws-logo-s)"
         strokeWidth={28}
         strokeLinecap="round"
         strokeLinejoin="round"
