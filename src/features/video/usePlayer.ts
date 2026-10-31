@@ -103,6 +103,10 @@ export function usePlayer(timeline: Timeline, readSource: (id: string) => Promis
     wantPlay.current.delete(el);
     if (!el.paused) el.pause();
     if (Math.abs(el.currentTime - want) > tol && prerolled.current.get(el) !== want) {
+      // Прокрутка шкалы: пока идёт прошлая перемотка, новую не начинаем — иначе браузер
+      // (особенно Safari на iPhone) отменяет её и не показывает ни одного кадра до остановки пальца.
+      // Когда кадр готов (seeked), sync сам перемотает к последнему положению плейхеда.
+      if (el.seeking) return;
       prerolled.current.set(el, want);
       try {
         el.currentTime = want;
